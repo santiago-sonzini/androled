@@ -22,6 +22,10 @@ export class CameraRig {
     this.orbitRadius   = 80;
     this.orbitProgress = 0;
 
+    // LookAt suavizado — evita el snap al entrar/salir del orbit
+    this._lookAtY = 0;
+    this._lookAtZ = 200; // targetZ(300) - 100
+
     this._initGyro();
   }
 
@@ -74,12 +78,20 @@ export class CameraRig {
       this.camera.position.x = lerp(this.camera.position.x, cx + this.mouseOffsetX, this.currentLerpSpeed);
       this.camera.position.y = lerp(this.camera.position.y, cy + this.mouseOffsetY, this.currentLerpSpeed);
       this.camera.position.z = lerp(this.camera.position.z, cz, this.currentLerpSpeed);
-      this.camera.lookAt(this.orbitCenter);
+
+      // LookAt suavizado hacia el centro del orbit
+      this._lookAtY = lerp(this._lookAtY, this.orbitCenter.y, 0.07);
+      this._lookAtZ = lerp(this._lookAtZ, this.orbitCenter.z, 0.07);
     } else {
       this.camera.position.x = lerp(this.camera.position.x, this.targetX + this.mouseOffsetX, this.currentLerpSpeed);
       this.camera.position.y = lerp(this.camera.position.y, this.targetY + this.mouseOffsetY, this.currentLerpSpeed);
       this.camera.position.z = lerp(this.camera.position.z, this.targetZ, this.currentLerpSpeed);
-      this.camera.lookAt(0, 0, this.targetZ - 100);
+
+      // LookAt suavizado hacia adelante — nunca salta, siempre lerp
+      this._lookAtY = lerp(this._lookAtY, 0, 0.05);
+      this._lookAtZ = lerp(this._lookAtZ, this.targetZ - 100, 0.05);
     }
+
+    this.camera.lookAt(0, this._lookAtY, this._lookAtZ);
   }
 }

@@ -277,6 +277,13 @@ section {
   .whatsapp-btn   { font-size: 0.78rem; padding: 0.8rem 1.7rem; }
 }
 
+/* ── CURSOR: ocultar en touch (hover: none detecta dispositivos táctiles) ── */
+@media (hover: none) {
+  body          { cursor: auto; }
+  #cursor,
+  #cursor-ring  { display: none; }
+}
+
 /* ── SECCIÓN 1: altura extra para transición lenta ── */
 #section-1 {
   min-height: 180vh;
