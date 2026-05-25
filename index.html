@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Androled</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=Inter:wght@300;400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.158.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.158.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+</head>
+<body>
+
+  <div id="cursor"></div>
+  <div id="cursor-ring"></div>
+  <canvas id="webgl-canvas"></canvas>
+  <div id="noise-overlay" aria-hidden="true"></div>
+
+  <!-- SECCIÓN 0: ENTRY -->
+  <section id="section-0">
+    <div class="wordmark-container">
+      <h1 class="wordmark" aria-label="Androled"></h1>
+      <p class="wordmark-sub">Pulseras LED para eventos</p>
+    </div>
+    <div class="scroll-hint" aria-hidden="true">Scroll</div>
+  </section>
+
+  <!-- SECCIÓN 1: ÁTOMO / RINGS — altura extra para transición lenta -->
+  <section id="section-1">
+    <div class="section-1-content">
+      <p class="section-label"><span>Experiencia</span></p>
+      <h2 class="headline" aria-label="Luz que se mueve con tu gente"></h2>
+      <p class="body-text">
+        Sincronizamos miles de pulseras LED en tiempo real. Cada evento se convierte
+        en un espectáculo de luz vivo, colectivo e irrepetible.
+      </p>
+    </div>
+  </section>
+
+  <!-- SECCIÓN 2: FINAL — las líneas flotan sobre esto -->
+  <section id="section-2">
+    <div class="final-inner">
+      <p class="final-label">Androled</p>
+      <h2 class="final-headline">Tu evento.<br/>Nuestra luz.</h2>
+      <p class="final-sub">Cotizá tu paquete de pulseras LED y transformá la noche.</p>
+      <a
+        class="whatsapp-btn"
+        href="https://wa.me/5493516000000"
+        target="_blank"
+        rel="noopener"
+        aria-label="Contactar por WhatsApp"
+      >
+        <span class="whatsapp-btn__glow"></span>
+        <svg class="whatsapp-btn__icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M16 2C8.268 2 2 8.268 2 16c0 2.478.677 4.8 1.855 6.793L2 30l7.395-1.83A13.94 13.94 0 0016 30c7.732 0 14-6.268 14-14S23.732 2 16 2z" fill="#25D366"/>
+          <path d="M22.5 19.5c-.3-.15-1.77-.873-2.044-.972-.274-.1-.473-.15-.672.15-.2.3-.772.972-.947 1.172-.174.2-.349.224-.648.075-.3-.15-1.265-.466-2.41-1.485-.891-.794-1.493-1.774-1.668-2.073-.174-.3-.018-.462.131-.61.134-.134.3-.349.449-.523.15-.175.2-.3.3-.499.1-.2.05-.374-.025-.523-.075-.15-.672-1.62-.921-2.22-.243-.582-.49-.503-.672-.512l-.573-.01c-.2 0-.523.075-.797.374-.274.3-1.046 1.022-1.046 2.492s1.071 2.892 1.22 3.092c.15.2 2.107 3.215 5.104 4.508.714.308 1.271.492 1.705.63.716.228 1.368.196 1.884.119.575-.086 1.77-.724 2.02-1.423.249-.7.249-1.3.174-1.424-.074-.123-.273-.198-.573-.348z" fill="white"/>
+        </svg>
+        <span class="whatsapp-btn__text">Hablemos por WhatsApp</span>
+      </a>
+    </div>
+  </section>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { detectGPUTier }       from './src/utils/GPUTier.js';
+    import { SceneManager }        from './src/SceneManager.js';
+    import { ParticleEngine }      from './src/ParticleEngine.js';
+    import { CameraRig }           from './src/CameraRig.js';
+    import { LightSystem }         from './src/LightSystem.js';
+    import { LineField }           from './src/LineField.js';
+    import { SectionOrchestrator } from './src/SectionOrchestrator.js';
+    import { InteractionLayer }    from './src/InteractionLayer.js';
+
+    gsap.registerPlugin(ScrollTrigger);
+
+    function splitWordmark(selector, text) {
+      const el = document.querySelector(selector);
+      if (!el) return;
+      el.innerHTML = '';
+      [...text].forEach(ch => {
+        const s = document.createElement('span');
+        s.className   = 'char';
+        s.textContent = ch === ' ' ? '\u00A0' : ch;
+        el.appendChild(s);
+      });
+    }
+    function splitIntoChars(selector, text) {
+      const el = document.querySelector(selector);
+      if (!el) return;
+      el.innerHTML = '';
+      text.split(' ').forEach((word, wi, arr) => {
+        const w = document.createElement('span');
+        w.className = 'word';
+        [...word].forEach(ch => {
+          const c = document.createElement('span');
+          c.className = 'char'; c.textContent = ch;
+          w.appendChild(c);
+        });
+        el.appendChild(w);
+        if (wi < arr.length - 1) el.appendChild(document.createTextNode('\u00A0'));
+      });
+    }
+
+    splitWordmark('.wordmark', 'Androled');
+    splitIntoChars('#section-1 .headline', 'Luz que se mueve con tu gente.');
+
+    const gpuTier       = detectGPUTier();
+    const particleCount = gpuTier === 'high' ? 150000 : gpuTier === 'mid' ? 80000 : 30000;
+    const canvas        = document.getElementById('webgl-canvas');
+    const sceneManager  = new SceneManager(canvas, gpuTier);
+    const { scene, camera } = sceneManager;
+    const particles     = new ParticleEngine(scene, particleCount);
+    const cameraRig     = new CameraRig(camera);
+    const lights        = new LightSystem(scene, sceneManager);
+    const lineField     = new LineField(scene);
+    const orchestrator  = new SectionOrchestrator(scene, camera, cameraRig, particles, lights, sceneManager, lineField);
+    const interaction   = new InteractionLayer(camera, particles, cameraRig, sceneManager);
+
+    // Entry
+    gsap.to(cameraRig, { targetZ: 0, duration: 2.4, ease: 'power3.out' });
+    gsap.to('.wordmark .char', {
+      opacity: 1, filter: 'blur(0px)', scale: 1,
+      duration: 1.2, ease: 'expo.out', stagger: 0.07, delay: 0.3,
+    });
+    gsap.to('.wordmark-sub', { opacity: 1, duration: 1.0, delay: 1.1 });
+    gsap.to('.scroll-hint',  { opacity: 0.5, duration: 0.8, delay: 2.2 });
+
+    // Render loop
+    const clock = new THREE.Clock();
+    let last = 0;
+    (function render() {
+      requestAnimationFrame(render);
+      const t  = clock.getElapsedTime();
+      const dt = t - last; last = t;
+      particles.update(t, orchestrator._scrollEMA || 0);
+      cameraRig.update(dt);
+      lights.update(t);
+      orchestrator.update(t);
+      sceneManager.updateTime(t);
+      sceneManager.render();
+    })();
+  </script>
+</body>
+</html>
