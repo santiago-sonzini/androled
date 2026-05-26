@@ -1,0 +1,61 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+    provider = "prisma-client-js"
+}
+
+datasource db {
+     provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+// schema.prisma
+
+
+
+
+model Event {
+  id              String   @id @default(cuid())
+  name            String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  guests          Guest[]
+
+  admin           Admin?   @relation(fields: [adminId], references: [id])
+  adminId         String?
+
+  code            String?  @unique
+}
+
+model Guest {
+  id                     String   @id @default(cuid())
+  eventId                String
+  event                  Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  name                   String
+  email                  String?
+  phone                  String?
+  hasDietRestriction     Boolean  @default(false)
+  dietRestrictionComment String?
+  rsvp                   Boolean  @default(true)
+  plusOne                Boolean  @default(false)
+  // Only the main guest (index 0) has these fields populated
+  isMainGuest            Boolean  @default(false)
+  goesWith             String? //  main guest's name 
+  comments               String?  // The shared "comments" field from the form
+
+  createdAt              DateTime @default(now())
+
+  @@index([eventId])
+}
+
+model Admin {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events    Event[]
+}
