@@ -7,6 +7,8 @@ export const env = createEnv({
    * isn't built with invalid env vars.
    */
   server: {
+    SUPABASE_URL: z.string().url(),
+    SUPABASE_PUBLISHABLE_KEY: z.string(),
     DATABASE_URL: z.string().url(),
     DIRECT_URL: z.string().url(),
     JWT_SECRET: z.string(),
@@ -33,6 +35,8 @@ export const env = createEnv({
    * middlewares) or client-side so we need to destruct manually.
    */
   runtimeEnv: {
+    SUPABASE_URL: process.env.SUPABASE_URL,
+    SUPABASE_PUBLISHABLE_KEY: process.env.SUPABASE_PUBLISHABLE_KEY,
     EVENT_ID: process.env.EVENT_ID,
     DIRECT_URL: process.env.DIRECT_URL,
     JWT_SECRET: process.env.JWT_SECRET,
