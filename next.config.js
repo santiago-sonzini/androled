@@ -12,7 +12,7 @@ const nextConfig = {
               pathname: '/storage/v1/object/public/eventos/**', // ✅ patrón correcto
             },
           ],      },
-    
+    allowedDevOrigins: ['http://localhost:3000', 'http://mac.local:3000'],
     
 };
 
