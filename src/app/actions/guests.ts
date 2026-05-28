@@ -615,3 +615,17 @@ export async function getGuestById(id: string) {
     return null;
   }
 }
+
+export async function updateGuestNroPulsera(id: string, nroPulsera: number) {
+  try {
+    await db.guest.update({
+      where: { id },
+      data: { nroPulsera },
+    });
+
+    return { message: "Pulsera actualizada correctamente", status: 200 };
+  } catch (error) {
+    console.error("Unexpected error:", error);
+    return { error, status: 500 };
+  }
+}

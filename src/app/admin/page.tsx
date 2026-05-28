@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import { getGuestById } from "@/app/actions/guests"; // ajustá el path según tu proyecto
 
 type NFCStatus = "idle" | "scanning" | "writing" | "success" | "error" | "unsupported";
 
@@ -16,6 +17,7 @@ export default function NFCPage() {
   const [readRecords, setReadRecords] = useState<NFCRecord[]>([]);
   const [writeText, setWriteText] = useState<string>("");
   const [serialNumber, setSerialNumber] = useState<string>("");
+  const [guest, setGuest] = useState<Awaited<ReturnType<typeof getGuestById>>>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const isSupported = typeof window !== "undefined" && "NDEFReader" in window;
@@ -37,7 +39,7 @@ export default function NFCPage() {
       const ndef = new (window as any).NDEFReader();
       await ndef.scan({ signal: abortControllerRef.current.signal });
 
-      ndef.onreading = (event: any) => {
+      ndef.onreading = async (event: any) => {
         setSerialNumber(event.serialNumber);
         const records: NFCRecord[] = [];
 
@@ -52,14 +54,30 @@ export default function NFCPage() {
           } else {
             decoded = `[${record.recordType}]`;
           }
-          records.push({
-            recordType: record.recordType,
-            mediaType: record.mediaType,
-            data: decoded,
-          });
+          records.push({ recordType: record.recordType, mediaType: record.mediaType, data: decoded });
         }
 
         setReadRecords(records);
+
+        // Extraer ID del texto leído (último segmento de la URL)
+        const textRecord = records.find((r) => r.recordType === "text");
+        if (textRecord) {
+          const id = textRecord.data.split("/").pop();
+          if (id) {
+            setMessage("Buscando invitado...");
+            const result = await getGuestById(id);
+            if (result) {
+              setGuest(result);
+              setStatus("success");
+              setMessage("Invitado encontrado.");
+            } else {
+              setStatus("error");
+              setMessage("No se encontró el invitado.");
+            }
+            return;
+          }
+        }
+
         setStatus("success");
         setMessage("Tag leído correctamente.");
       };
@@ -228,6 +246,25 @@ export default function NFCPage() {
         >
           {status === "scanning" ? "Detener escaneo" : "Iniciar escaneo"}
         </button>
+
+        {guest && (
+          <div
+            style={{
+              background: "rgba(34,197,94,0.06)",
+              border: "1px solid rgba(34,197,94,0.2)",
+              borderRadius: "10px",
+              padding: "1rem",
+              textAlign: "center",
+            }}
+          >
+            <div style={{ fontSize: "0.65rem", color: "#16a34a", letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "0.3rem" }}>
+              Invitado
+            </div>
+            <div style={{ fontSize: "1.2rem", fontWeight: 700, color: "#111111" }}>
+              {guest.name}
+            </div>
+          </div>
+        )}
 
         {readRecords.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
