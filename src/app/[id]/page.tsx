@@ -3,7 +3,7 @@ import { getGuestById } from '../actions/guests';
 import { getGuestPhotoUrl } from '../actions/supaimages';
 import { redirect } from 'next/navigation';
 
-const IdPageClient = dynamic(() => import('./IdPageClient'), { ssr: false });
+const IdPageClient = dynamic(() => import('./IdPageClient'), { ssr: true });
 
 export default async function IdPage({ params }: { params: { id: string } }) {
   const guest = await getGuestById(params.id);

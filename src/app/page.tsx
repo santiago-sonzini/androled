@@ -27,7 +27,7 @@ export const metadata: Metadata = {
   },
 };
 
-const LandingClient = dynamic(() => import('./LandingClient'), { ssr: false });
+const LandingClient = dynamic(() => import('./LandingClient'), { ssr: true });
 
 export default function HomePage() {
   return <LandingClient />;
