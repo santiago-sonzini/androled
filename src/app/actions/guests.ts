@@ -5,6 +5,7 @@ import { sendEmail } from "./sendEmail";
 import { db } from "@/server/db";
 import { get_event_complete } from "./events";
 import { RSVPFormSchema } from "@/components/forms/confirm-asistance";
+import { AndroLedGuest } from "@prisma/client";
 
 // ─── Guests ───────────────────────────────────────────────────────────────────
 
@@ -648,6 +649,17 @@ export async function pulseraEntregada(id: string, value: boolean) {
     });
 
     return { message: "Pulsera entregada actualizada correctamente", status: 200 };
+  } catch (error) {
+    console.error("Unexpected error:", error);
+    return { error, status: 500 };
+  }
+}
+
+
+export async function createGuest(guest: AndroLedGuest) {
+  try {
+    await db.androLedGuest.create({ data: guest });
+    return { message: "Invitado creado correctamente", status: 200 };
   } catch (error) {
     console.error("Unexpected error:", error);
     return { error, status: 500 };

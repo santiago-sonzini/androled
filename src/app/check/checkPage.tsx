@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { pulseraEntregada, updateGuestNroPulsera } from "../actions/guests";
+import { createGuest, pulseraEntregada, updateGuestNroPulsera } from "../actions/guests";
 import type { AndroLedGuest } from "@prisma/client";
 import { toast } from "@/components/ui/use-toast";
 
@@ -189,6 +189,7 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
         nroPulsera: newPulsera.trim() ? parseInt(newPulsera.trim()) : null,
         pulseraEntregada: false,
       };
+      await createGuest(newGuest);
       setGuests(prev => [newGuest, ...prev]);
       setCheckedId(newId);
       setScanStatus("match");
