@@ -17,7 +17,7 @@ function genId() {
   return "local_" + Math.random().toString(36).slice(2, 12);
 }
 
-type ScanStatus = "idle" | "scanning" | "reading" | "writing" | "match" | "mismatch" | "error";
+type ScanStatus = "idle" | "scanning" | "reading" | "writing" | "match" | "mismatch" | "error" | "continuous";
 
 export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
   const [guests, setGuests] = useState<AndroLedGuest[]>(initialGuests);
@@ -34,15 +34,21 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
   const [newMesa, setNewMesa] = useState("");
   const [newPulsera, setNewPulsera] = useState("");
   const [newPhone, setNewPhone] = useState("");
+  const [debugLogs, setDebugLogs] = useState<string[]>([]);
+  const [continuousGuest, setContinuousGuest] = useState<AndroLedGuest | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const isSupported = typeof window !== "undefined" && "NDEFReader" in window;
 
+  function addLog(msg: string) {
+    setDebugLogs(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev].slice(0, 20));
+  }
+
   async function setEntregada(id: string, value: boolean) {
-     const res = await pulseraEntregada(id, value);
-     if (res.error) toast({ title: "Error al actualizar la pulsa", description: "no se pudo entregar" });
-     else toast({ title: "Pulsera actualizada", description: "Pulsera actualizada correctamente" });
-     setGuests(prev => prev.map(g => g.id === id ? { ...g, pulseraEntregada: value } : g));
+    const res = await pulseraEntregada(id, value);
+    if (res.error) toast({ title: "Error al actualizar la pulsa", description: "no se pudo entregar" });
+    else toast({ title: "Pulsera actualizada", description: "Pulsera actualizada correctamente" });
+    setGuests(prev => prev.map(g => g.id === id ? { ...g, pulseraEntregada: value } : g));
   }
 
   async function startVerify() {
@@ -52,14 +58,20 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
       abortControllerRef.current = new AbortController();
       setScanStatus("scanning");
       setScanMessage("Acercá la pulsera NFC...");
+      addLog("Iniciando verificación...");
       const ndef = new (window as any).NDEFReader();
       await ndef.scan({ signal: abortControllerRef.current.signal });
       ndef.onreading = (event: any) => {
         abortControllerRef.current?.abort();
+        addLog(`Records recibidos: ${event.message.records.length}`);
         for (const record of event.message.records) {
-          if (record.recordType === "text") {
+          addLog(`Record type: ${record.recordType}, lang: ${record.lang ?? "n/a"}`);
+          if (record.recordType === "text" || record.recordType === "url") {
             const decoder = new TextDecoder(record.encoding || "utf-8");
-            const scannedId = decoder.decode(record.data).split("/").pop();
+            const text = decoder.decode(record.data);
+            addLog(`Texto decodificado: ${text}`);
+            const scannedId = text.includes("/") ? text.split("/").pop() : text;
+            addLog(`ID extraído: ${scannedId}`);
             if (scannedId === checkedId) {
               setVerified(prev => new Set(prev).add(checkedId));
               setScanStatus("match");
@@ -71,13 +83,14 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
             return;
           }
         }
+        addLog("No se encontró record de tipo text/url");
         setScanStatus("error");
         setScanMessage("No se pudo leer el ID del tag.");
       };
-      ndef.onreadingerror = () => { setScanStatus("error"); setScanMessage("Error al leer el tag."); };
+      ndef.onreadingerror = () => { addLog("onreadingerror disparado"); setScanStatus("error"); setScanMessage("Error al leer el tag."); };
     } catch (err: any) {
       if (err.name === "AbortError") { setScanStatus("idle"); setScanMessage(""); }
-      else { setScanStatus("error"); setScanMessage(`Error: ${err.message}`); }
+      else { addLog(`Excepción: ${err.message}`); setScanStatus("error"); setScanMessage(`Error: ${err.message}`); }
     }
   }
 
@@ -85,6 +98,7 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
     abortControllerRef.current?.abort();
     setScanStatus("idle");
     setScanMessage("");
+    setContinuousGuest(null);
   }
 
   async function startRead() {
@@ -94,14 +108,20 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
       setScanStatus("reading");
       setScanMessage("Acercá la pulsera NFC...");
       setReadGuest(null);
+      addLog("Iniciando lectura única...");
       const ndef = new (window as any).NDEFReader();
       await ndef.scan({ signal: abortControllerRef.current.signal });
       ndef.onreading = (event: any) => {
         abortControllerRef.current?.abort();
+        addLog(`Records recibidos: ${event.message.records.length}`);
         for (const record of event.message.records) {
-          if (record.recordType === "text") {
+          addLog(`Record type: ${record.recordType}, lang: ${record.lang ?? "n/a"}`);
+          if (record.recordType === "text" || record.recordType === "url") {
             const decoder = new TextDecoder(record.encoding || "utf-8");
-            const scannedId = decoder.decode(record.data).split("/").pop();
+            const text = decoder.decode(record.data);
+            addLog(`Texto decodificado: ${text}`);
+            const scannedId = text.includes("/") ? text.split("/").pop() : text;
+            addLog(`ID extraído: ${scannedId}`);
             const found = scannedId ? guests.find(g => g.id === scannedId) ?? null : null;
             setReadGuest(found);
             setScanStatus(found ? "match" : "error");
@@ -109,13 +129,53 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
             return;
           }
         }
+        addLog("No se encontró record de tipo text/url");
         setScanStatus("error");
         setScanMessage("No se pudo leer el ID del tag.");
       };
-      ndef.onreadingerror = () => { setScanStatus("error"); setScanMessage("Error al leer el tag."); };
+      ndef.onreadingerror = () => { addLog("onreadingerror disparado"); setScanStatus("error"); setScanMessage("Error al leer el tag."); };
     } catch (err: any) {
       if (err.name === "AbortError") { setScanStatus("idle"); setScanMessage(""); }
-      else { setScanStatus("error"); setScanMessage(`Error: ${err.message}`); }
+      else { addLog(`Excepción: ${err.message}`); setScanStatus("error"); setScanMessage(`Error: ${err.message}`); }
+    }
+  }
+
+  async function startContinuousRead() {
+    if (!isSupported) { setScanStatus("error"); setScanMessage("Web NFC no está soportado."); return; }
+    try {
+      abortControllerRef.current = new AbortController();
+      setScanStatus("continuous");
+      setScanMessage("Modo continuo activo. Acercá pulseras...");
+      setContinuousGuest(null);
+      addLog("Iniciando lectura continua...");
+      const ndef = new (window as any).NDEFReader();
+      await ndef.scan({ signal: abortControllerRef.current.signal });
+      ndef.onreading = (event: any) => {
+        addLog(`[Continuo] Records recibidos: ${event.message.records.length}`);
+        for (const record of event.message.records) {
+          addLog(`[Continuo] Record type: ${record.recordType}`);
+          if (record.recordType === "text" || record.recordType === "url") {
+            const decoder = new TextDecoder(record.encoding || "utf-8");
+            const text = decoder.decode(record.data);
+            addLog(`[Continuo] Texto: ${text}`);
+            const scannedId = text.includes("/") ? text.split("/").pop() : text;
+            const found = scannedId ? guests.find(g => g.id === scannedId) ?? null : null;
+            if (found) {
+              setContinuousGuest(found);
+              addLog(`[Continuo] Encontrado: ${found.name} / Pulsera #${found.nroPulsera ?? "—"}`);
+            } else {
+              setContinuousGuest(null);
+              addLog(`[Continuo] ID no encontrado: ${scannedId}`);
+            }
+            return;
+          }
+        }
+        addLog("[Continuo] No se encontró record de tipo text/url");
+      };
+      ndef.onreadingerror = () => { addLog("[Continuo] onreadingerror"); };
+    } catch (err: any) {
+      if (err.name === "AbortError") { setScanStatus("idle"); setScanMessage(""); setContinuousGuest(null); }
+      else { addLog(`Excepción: ${err.message}`); setScanStatus("error"); setScanMessage(`Error: ${err.message}`); }
     }
   }
 
@@ -172,22 +232,11 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
         { signal: abortControllerRef.current.signal }
       );
       const newGuest: AndroLedGuest = {
-        id: newId,
-        eventId: "",
-        name: newName.trim(),
-        email: null,
-        phone: newPhone.trim() || null,
-        hasDietRestriction: false,
-        dietRestrictionComment: null,
-        rsvp: true,
-        isMainGuest: true,
-        comments: null,
-        createdAt: new Date(),
-        plusOne: false,
-        goesWith: null,
-        mesa: newMesa.trim() ? parseInt(newMesa.trim()) : null,
-        nroPulsera: newPulsera.trim() ? parseInt(newPulsera.trim()) : null,
-        pulseraEntregada: false,
+        id: newId, eventId: "", name: newName.trim(), email: null,
+        phone: newPhone.trim() || null, hasDietRestriction: false, dietRestrictionComment: null,
+        rsvp: true, isMainGuest: true, comments: null, createdAt: new Date(),
+        plusOne: false, goesWith: null, mesa: newMesa.trim() ? parseInt(newMesa.trim()) : null,
+        nroPulsera: newPulsera.trim() ? parseInt(newPulsera.trim()) : null, pulseraEntregada: false,
       };
       await createGuest(newGuest);
       setGuests(prev => [newGuest, ...prev]);
@@ -218,6 +267,8 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
     ? { bg: "rgba(34,197,94,0.08)", text: "#16a34a", border: "rgba(34,197,94,0.25)" }
     : scanStatus === "mismatch" || scanStatus === "error"
     ? { bg: "rgba(239,68,68,0.08)", text: "#dc2626", border: "rgba(239,68,68,0.25)" }
+    : scanStatus === "continuous"
+    ? { bg: "rgba(245,158,11,0.08)", text: "#d97706", border: "rgba(245,158,11,0.25)" }
     : { bg: "rgba(107,95,248,0.08)", text: "#6b5ff8", border: "rgba(107,95,248,0.25)" };
 
   const inputStyle: React.CSSProperties = { display: "block", marginTop: "0.4rem", width: "100%", padding: "0.7rem 0.9rem", borderRadius: "8px", border: "1px solid #e5e5e5", fontFamily: "inherit", fontSize: "0.9rem", color: "#111", background: "#fafafa", outline: "none", boxSizing: "border-box" };
@@ -232,10 +283,10 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
 
       <section style={{ width: "100%", maxWidth: "420px", background: "#fff", border: "1px solid #e5e5e5", borderRadius: "16px", padding: "1.5rem", display: "flex", flexDirection: "column", gap: "1rem" }}>
         <div style={{ fontSize: "0.65rem", letterSpacing: "0.25em", textTransform: "uppercase", color: "#6b5ff8" }}>
-          {scanStatus === "scanning" ? "Esperando pulsera..." : "Invitado seleccionado"}
+          {scanStatus === "scanning" ? "Esperando pulsera..." : scanStatus === "continuous" ? "Modo continuo activo" : "Invitado seleccionado"}
         </div>
 
-        {selectedGuest ? (
+        {selectedGuest && scanStatus !== "continuous" ? (
           <div style={{ background: "#fafafa", border: "1px solid #e5e5e5", borderRadius: "10px", padding: "0.85rem" }}>
             <div style={{ fontWeight: 700, fontSize: "1rem" }}>{selectedGuest.name}</div>
             {selectedGuest.email && <div style={{ fontSize: "0.75rem", color: "#888", marginTop: "0.2rem" }}>{selectedGuest.email}</div>}
@@ -250,11 +301,31 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
               )}
             </div>
           </div>
-        ) : (
+        ) : scanStatus !== "continuous" ? (
           <div style={{ color: "#bbb", fontSize: "0.82rem" }}>Seleccioná un invitado de la tabla</div>
+        ) : null}
+
+        {/* Continuous read result */}
+        {scanStatus === "continuous" && (
+          <div style={{ borderRadius: "12px", border: continuousGuest ? "1px solid rgba(34,197,94,0.3)" : "1px solid rgba(245,158,11,0.25)", background: continuousGuest ? "rgba(34,197,94,0.05)" : "rgba(245,158,11,0.05)", padding: "1.1rem", minHeight: "80px", display: "flex", flexDirection: "column", justifyContent: "center", gap: "0.3rem" }}>
+            {continuousGuest ? (
+              <>
+                <div style={{ fontWeight: 700, fontSize: "1.15rem", color: "#111" }}>{continuousGuest.name}</div>
+                <div style={{ display: "flex", gap: "1rem", fontSize: "0.78rem", color: "#555", marginTop: "0.2rem" }}>
+                  {continuousGuest.mesa && <span>Mesa <strong>{continuousGuest.mesa}</strong></span>}
+                  <span>Pulsera <strong>#{continuousGuest.nroPulsera ?? "—"}</strong></span>
+                  <span style={{ color: continuousGuest.pulseraEntregada ? "#16a34a" : "#f59e0b" }}>
+                    {continuousGuest.pulseraEntregada ? "✓ Entregada" : "⏳ Pendiente"}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <div style={{ color: "#d97706", fontSize: "0.82rem", textAlign: "center" }}>⟳ Acercá una pulsera...</div>
+            )}
+          </div>
         )}
 
-        {scanMessage && (
+        {scanMessage && scanStatus !== "continuous" && (
           <div style={{ padding: "0.5rem 1rem", borderRadius: "8px", fontSize: "0.8rem", background: badgeColor.bg, color: badgeColor.text, border: `1px solid ${badgeColor.border}` }}>
             {scanStatus === "scanning" ? "⟳ " : ""}{scanMessage}
           </div>
@@ -270,15 +341,15 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
           </button>
           <button
             onClick={scanStatus === "reading" ? cancelScan : startRead}
-            disabled={scanStatus === "scanning"}
-            style={{ flex: 1, padding: "0.85rem", borderRadius: "10px", border: "1px solid #e5e5e5", background: scanStatus === "reading" ? "rgba(239,68,68,0.1)" : "#fff", color: scanStatus === "reading" ? "#dc2626" : (scanStatus === "scanning" ? "#aaa" : "#111"), fontSize: "0.88rem", fontFamily: "inherit", fontWeight: 600, cursor: scanStatus === "scanning" ? "not-allowed" : "pointer", transition: "background 0.15s" }}
+            disabled={scanStatus === "scanning" || scanStatus === "continuous"}
+            style={{ flex: 1, padding: "0.85rem", borderRadius: "10px", border: "1px solid #e5e5e5", background: scanStatus === "reading" ? "rgba(239,68,68,0.1)" : "#fff", color: scanStatus === "reading" ? "#dc2626" : (scanStatus === "scanning" || scanStatus === "continuous" ? "#aaa" : "#111"), fontSize: "0.88rem", fontFamily: "inherit", fontWeight: 600, cursor: (scanStatus === "scanning" || scanStatus === "continuous") ? "not-allowed" : "pointer", transition: "background 0.15s" }}
           >
             {scanStatus === "reading" ? "Cancelar" : "Leer"}
           </button>
           <button
             onClick={scanStatus === "writing" ? cancelScan : openWriteModal}
-            disabled={(!checkedId && scanStatus !== "writing") || scanStatus === "scanning" || scanStatus === "reading"}
-            style={{ flex: 1, padding: "0.85rem", borderRadius: "10px", border: "1px solid #e5e5e5", background: scanStatus === "writing" ? "rgba(239,68,68,0.1)" : ((!checkedId || scanStatus === "scanning" || scanStatus === "reading") ? "#f9f9f9" : "#fff"), color: scanStatus === "writing" ? "#dc2626" : ((!checkedId || scanStatus === "scanning" || scanStatus === "reading") ? "#bbb" : "#111"), fontSize: "0.88rem", fontFamily: "inherit", fontWeight: 600, cursor: ((!checkedId && scanStatus !== "writing") || scanStatus === "scanning" || scanStatus === "reading") ? "not-allowed" : "pointer", transition: "background 0.15s" }}
+            disabled={(!checkedId && scanStatus !== "writing") || scanStatus === "scanning" || scanStatus === "reading" || scanStatus === "continuous"}
+            style={{ flex: 1, padding: "0.85rem", borderRadius: "10px", border: "1px solid #e5e5e5", background: scanStatus === "writing" ? "rgba(239,68,68,0.1)" : ((!checkedId || scanStatus === "scanning" || scanStatus === "reading" || scanStatus === "continuous") ? "#f9f9f9" : "#fff"), color: scanStatus === "writing" ? "#dc2626" : ((!checkedId || scanStatus === "scanning" || scanStatus === "reading" || scanStatus === "continuous") ? "#bbb" : "#111"), fontSize: "0.88rem", fontFamily: "inherit", fontWeight: 600, cursor: "pointer", transition: "background 0.15s" }}
           >
             {scanStatus === "writing" ? "Cancelar" : "Grabar tag"}
           </button>
@@ -287,7 +358,6 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
         <div style={{ display: "flex", gap: "0.75rem" }}>
           <button
             onClick={() => checkedId && setEntregada(checkedId, true)}
-            disabled={false}
             style={{ flex: 1, padding: "0.85rem", borderRadius: "10px", border: "none", background: isVerified && !isEntregada ? "rgba(34,197,94,0.9)" : "#f0f0f0", color: isVerified && !isEntregada ? "#fff" : "#aaa", fontSize: "0.88rem", fontFamily: "inherit", fontWeight: 600, cursor: isVerified && !isEntregada ? "pointer" : "not-allowed", transition: "background 0.15s" }}
           >
             Entregar
@@ -301,14 +371,23 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
           </button>
           <button
             onClick={openNewGuestModal}
-            disabled={scanStatus === "scanning" || scanStatus === "reading" || scanStatus === "writing"}
+            disabled={scanStatus === "scanning" || scanStatus === "reading" || scanStatus === "writing" || scanStatus === "continuous"}
             style={{ flex: 1, padding: "0.85rem", borderRadius: "10px", border: "1px solid #e5e5e5", background: "#fff", color: "#6b5ff8", fontSize: "0.88rem", fontFamily: "inherit", fontWeight: 600, cursor: "pointer", transition: "background 0.15s" }}
           >
             + Nuevo
           </button>
         </div>
 
-        {readGuest && (
+        {/* Continuous read button */}
+        <button
+          onClick={scanStatus === "continuous" ? cancelScan : startContinuousRead}
+          disabled={scanStatus === "scanning" || scanStatus === "reading" || scanStatus === "writing"}
+          style={{ width: "100%", padding: "0.85rem", borderRadius: "10px", border: scanStatus === "continuous" ? "none" : "1px solid rgba(245,158,11,0.4)", background: scanStatus === "continuous" ? "rgba(239,68,68,0.1)" : "rgba(245,158,11,0.06)", color: scanStatus === "continuous" ? "#dc2626" : "#d97706", fontSize: "0.88rem", fontFamily: "inherit", fontWeight: 600, cursor: (scanStatus === "scanning" || scanStatus === "reading" || scanStatus === "writing") ? "not-allowed" : "pointer", transition: "background 0.15s", letterSpacing: "0.04em" }}
+        >
+          {scanStatus === "continuous" ? "⏹ Detener lectura continua" : "⟳ Iniciar lectura continua"}
+        </button>
+
+        {readGuest && scanStatus !== "continuous" && (
           <div style={{ background: "rgba(107,95,248,0.05)", border: "1px solid rgba(107,95,248,0.15)", borderRadius: "10px", padding: "0.85rem" }}>
             <div style={{ fontSize: "0.62rem", color: "#6b5ff8", letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "0.4rem" }}>Pulsera leída</div>
             <div style={{ fontWeight: 700, fontSize: "1rem" }}>{readGuest.name}</div>
@@ -323,6 +402,19 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
                 </span>
               )}
             </div>
+          </div>
+        )}
+
+        {/* Debug logs */}
+        {debugLogs.length > 0 && (
+          <div style={{ background: "#0f0f0f", borderRadius: "10px", padding: "0.85rem", display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+            <div style={{ fontSize: "0.6rem", color: "#6b5ff8", letterSpacing: "0.2em", textTransform: "uppercase", marginBottom: "0.35rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span>Debug logs</span>
+              <button onClick={() => setDebugLogs([])} style={{ background: "transparent", border: "none", color: "#555", fontSize: "0.7rem", cursor: "pointer", fontFamily: "inherit" }}>limpiar</button>
+            </div>
+            {debugLogs.map((log, i) => (
+              <div key={i} style={{ fontSize: "0.65rem", color: i === 0 ? "#e2e2e2" : "#666", fontFamily: "'DM Mono','Courier New',monospace" }}>{log}</div>
+            ))}
           </div>
         )}
       </section>
@@ -345,16 +437,12 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
               </tr>
             </thead>
             <tbody>
-              {filteredGuests.sort((a, b) => (a.nroPulsera? a.nroPulsera : 1) - (b.nroPulsera ? b.nroPulsera : 1)).map((g, i) => {
+              {filteredGuests.sort((a, b) => (a.nroPulsera ? a.nroPulsera : 1) - (b.nroPulsera ? b.nroPulsera : 1)).map((g, i) => {
                 const isChecked = checkedId === g.id;
                 const isVer = verified.has(g.id);
                 const rowBg = g.pulseraEntregada ? "rgba(34,197,94,0.07)" : isVer ? "rgba(34,197,94,0.04)" : isChecked ? "rgba(107,95,248,0.06)" : i % 2 === 0 ? "#fff" : "#fafafa";
                 return (
-                  <tr
-                    key={g.id}
-                    onClick={() => { if (scanStatus !== "scanning") setCheckedId(isChecked ? null : g.id); }}
-                    style={{ borderBottom: "1px solid #f0f0f0", background: rowBg, cursor: scanStatus === "scanning" ? "default" : "pointer" }}
-                  >
+                  <tr key={g.id} onClick={() => { if (scanStatus !== "scanning" && scanStatus !== "continuous") setCheckedId(isChecked ? null : g.id); }} style={{ borderBottom: "1px solid #f0f0f0", background: rowBg, cursor: (scanStatus === "scanning" || scanStatus === "continuous") ? "default" : "pointer" }}>
                     <td style={{ ...td, textAlign: "center" }}>
                       {isVer ? (
                         <span style={{ color: "#16a34a", fontSize: "1rem" }}>✓</span>
@@ -367,7 +455,7 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
                     <td style={{ ...td, color: g.goesWith ? "#555" : "#ccc" }}>{g.goesWith || "—"}</td>
                     <td style={{ ...td, color: g.mesa ? "#111" : "#ccc" }}>{g.mesa || "—"}</td>
                     <td style={{ ...td, color: g.nroPulsera ? "#111" : "#ccc" }}>{g.nroPulsera || "—"}</td>
-                    <td style={{ ...td }}>
+                    <td style={td}>
                       {g.pulseraEntregada ? (
                         <span style={{ fontSize: "0.7rem", padding: "0.2rem 0.5rem", borderRadius: "6px", background: "rgba(34,197,94,0.1)", color: "#16a34a" }}>Entregada</span>
                       ) : isVer ? (
