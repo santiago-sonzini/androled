@@ -18,6 +18,7 @@ model Event {
   admin     Admin?    @relation(fields: [adminId], references: [id])
   guests    Guest[]
   Message   Message[]
+  androGuest AndroLedGuest[]
 }
 
 model Guest {
@@ -57,4 +58,28 @@ model Message {
   message   String
   from      String
   Event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+}
+
+
+model AndroLedGuest {
+  id                     String   @id @default(cuid())
+  eventId                String
+  name                   String
+  email                  String?
+  phone                  String?
+  hasDietRestriction     Boolean  @default(false)
+  dietRestrictionComment String?
+  rsvp                   Boolean  @default(true)
+  isMainGuest            Boolean  @default(false)
+  comments               String?
+  createdAt              DateTime @default(now())
+  plusOne                Boolean  @default(false)
+  goesWith               String?
+  mesa                   Int?
+  nroPulsera             Int?
+  event                  Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  pulseraEntregada       Boolean  @default(false)
+
+
+  @@index([eventId])
 }
