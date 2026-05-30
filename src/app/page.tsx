@@ -1,5 +1,6 @@
 import dynamic from 'next/dynamic';
 import { Metadata } from 'next';
+import LandingClient from './LandingClient';
 
 export const metadata: Metadata = {
   title: 'Androled — Pulseras LED para eventos',
@@ -27,7 +28,6 @@ export const metadata: Metadata = {
   },
 };
 
-const LandingClient = dynamic(() => import('./LandingClient'), { ssr: true });
 
 export default function HomePage() {
   return <LandingClient />;

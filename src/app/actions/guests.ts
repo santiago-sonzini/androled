@@ -616,6 +616,16 @@ export async function getGuestById(id: string) {
   }
 }
 
+export async function getAllGuests() {
+  try {
+    const guests = await db.androLedGuest.findMany({ });
+    return guests;
+  } catch (error) {
+    console.error("Unexpected error:", error);
+    return null;
+  }
+}
+
 export async function updateGuestNroPulsera(id: string, nroPulsera: number) {
   try {
     await db.guest.update({

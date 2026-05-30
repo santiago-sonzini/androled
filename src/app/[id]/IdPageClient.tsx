@@ -5,234 +5,8 @@ import * as THREE from 'three';
 import { gsap } from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 
-const ID_PAGE_CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=Inter:wght@300;400&display=swap');
 
-:root {
-  --void:           #030308;
-  --white-core:     #f8f4ff;
-  --text-primary:   #e8e4f8;
-  --text-secondary: #8882b8;
-}
 
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html { scroll-behavior: smooth; }
-
-body {
-  background: var(--void);
-  color: var(--text-primary);
-  font-family: 'Inter', sans-serif;
-  font-weight: 300;
-  overflow-x: hidden;
-  cursor: none;
-}
-
-#cursor {
-  position: fixed;
-  width: 8px; height: 8px;
-  background: var(--white-core);
-  border-radius: 50%;
-  pointer-events: none;
-  z-index: 9999;
-  transform: translate(-50%, -50%);
-  mix-blend-mode: difference;
-}
-#cursor-ring {
-  position: fixed;
-  width: 32px; height: 32px;
-  border: 1px solid rgba(248,244,255,0.4);
-  border-radius: 50%;
-  pointer-events: none;
-  z-index: 9998;
-  transform: translate(-50%, -50%);
-}
-
-#webgl-canvas-id {
-  position: fixed;
-  inset: 0;
-  width: 100%; height: 100%;
-  z-index: 0;
-  pointer-events: none;
-}
-
-#noise-overlay {
-  position: fixed;
-  inset: 0;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  opacity: 0.025;
-  pointer-events: none;
-  z-index: 200;
-  mix-blend-mode: overlay;
-}
-
-.scroll-hint {
-  position: absolute;
-  bottom: 2.5rem;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-  opacity: 0;
-  color: var(--text-secondary);
-  font-size: 0.6rem;
-  letter-spacing: 0.35em;
-  text-transform: uppercase;
-}
-.scroll-hint::after {
-  content: '';
-  width: 1px;
-  height: 36px;
-  background: linear-gradient(to bottom, var(--text-secondary), transparent);
-  animation: scrollPulse 2s ease-in-out infinite;
-}
-@keyframes scrollPulse {
-  0%, 100% { opacity: 0.3; }
-  50%       { opacity: 1;   }
-}
-
-#id-hero {
-  min-height: 100vh;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  text-align: center;
-  z-index: 10;
-  padding: 0 clamp(1.5rem, 6vw, 6rem);
-}
-
-.id-hero-inner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1.2rem;
-}
-
-.id-welcome {
-  font-family: 'Syne', sans-serif;
-  font-size: clamp(0.65rem, 1.4vw, 0.85rem);
-  letter-spacing: 0.4em;
-  text-transform: uppercase;
-  color: var(--text-secondary);
-  opacity: 0;
-  transform: translateY(16px);
-}
-
-.id-name {
-  font-family: 'Syne', sans-serif;
-  font-weight: 800;
-  font-size: clamp(3rem, 10vw, 8rem);
-  letter-spacing: -0.02em;
-  color: var(--white-core);
-  line-height: 1;
-  opacity: 0;
-  transform: translateY(20px);
-}
-
-#id-photo {
-  min-height: 100vh;
-  position: relative;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  z-index: 10;
-  background: transparent;
-  padding: 0 clamp(1.5rem, 6vw, 6rem);
-}
-
-.id-photo-inner {
-  position: relative;
-  z-index: 2;
-}
-
-.id-photo-img {
-  width: clamp(300px, 60vw, 420px);
-  aspect-ratio: 1;
-  object-fit: cover;
-  border: 2px solid rgba(255, 255, 255, 0.15);
-  box-shadow:
-    0 0 60px rgba(74, 71, 212, 0.4),
-    0 0 120px rgba(192, 38, 168, 0.2);
-  display: block;
-}
-
-.id-no-photo {
-  opacity: 1;
-  transform: none;
-  font-size: clamp(1rem, 3vw, 1.6rem) !important;
-  font-weight: 400 !important;
-  text-align: center;
-  color: var(--white-core) !important;
-}
-
-.id-photo-actions {
-  display: flex;
-  gap: 1rem;
-  margin-top: 1.8rem;
-  justify-content: center;
-}
-
-.id-action-btn {
-  font-family: 'Syne', sans-serif;
-  font-size: clamp(0.6rem, 1.2vw, 0.75rem);
-  letter-spacing: 0.35em;
-  text-transform: uppercase;
-  color: var(--white-core);
-  background: transparent;
-  border: 1px solid rgba(248, 244, 255, 0.5);
-  padding: 0.7rem 1.6rem;
-  cursor: none;
-  position: relative;
-  transition: border-color 0.3s, box-shadow 0.3s, color 0.3s;
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.id-action-btn:hover {
-  border-color: var(--white-core);
-  box-shadow:
-    0 0 8px rgba(248, 244, 255, 0.6),
-    0 0 20px rgba(248, 244, 255, 0.2),
-    inset 0 0 8px rgba(248, 244, 255, 0.04);
-  color: var(--white-core);
-}
-
-#id-footer {
-  position: relative;
-  z-index: 10;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 2rem;
-  padding: 2.5rem clamp(1.5rem, 6vw, 6rem);
-  border-top: 1px solid rgba(248, 244, 255, 0.06);
-}
-
-.id-footer-link {
-  font-family: 'Syne', sans-serif;
-  font-size: clamp(0.6rem, 1.2vw, 0.75rem);
-  letter-spacing: 0.35em;
-  text-transform: uppercase;
-  color: #f8f4ff;
-  text-decoration: none;
-  transition: color 0.3s;
-}
-
-.id-footer-link:hover {
-  color: #f8f4ff;
-}
-
-@media (hover: none) {
-  body         { cursor: auto; }
-  #cursor,
-  #cursor-ring { display: none; }
-}
-`;
 
 interface IdPageClientProps {
   id: string;
@@ -244,9 +18,9 @@ export default function IdPageClient({ id, name, photoSrc }: IdPageClientProps) 
   const displayName = name ?? id;
 
   useEffect(() => {
-    const styleEl = document.createElement('style');
-    styleEl.textContent = ID_PAGE_CSS;
-    document.head.appendChild(styleEl);
+    // const styleEl = document.createElement('style');
+    // styleEl.textContent = ID_PAGE_CSS;
+    // document.head.appendChild(styleEl);
 
     gsap.registerPlugin(ScrollTrigger);
     (window as any).gsap = gsap;
@@ -353,7 +127,7 @@ export default function IdPageClient({ id, name, photoSrc }: IdPageClientProps) 
       cancelAnimationFrame(cursorRaf);
       window.removeEventListener('mousemove', onMouseMove);
       ScrollTrigger.getAll().forEach((t: any) => t.kill());
-      styleEl.remove();
+      // styleEl.remove();
     };
   }, []);
 
