@@ -639,3 +639,17 @@ export async function updateGuestNroPulsera(id: string, nroPulsera: number) {
     return { error, status: 500 };
   }
 }
+
+export async function pulseraEntregada(id: string, value: boolean) {
+  try {
+    await db.androLedGuest.update({
+      where: { id },
+      data: { pulseraEntregada: value },
+    });
+
+    return { message: "Pulsera entregada actualizada correctamente", status: 200 };
+  } catch (error) {
+    console.error("Unexpected error:", error);
+    return { error, status: 500 };
+  }
+}

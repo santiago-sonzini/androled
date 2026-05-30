@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { updateGuestNroPulsera } from "../actions/guests";
+import { pulseraEntregada, updateGuestNroPulsera } from "../actions/guests";
 import type { AndroLedGuest } from "@prisma/client";
+import { toast } from "@/components/ui/use-toast";
 
 interface NFCPageProps {
   guests: AndroLedGuest[];
@@ -37,8 +38,11 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
 
   const isSupported = typeof window !== "undefined" && "NDEFReader" in window;
 
-  function setEntregada(id: string, value: boolean) {
-    setGuests(prev => prev.map(g => g.id === id ? { ...g, pulseraEntregada: value } : g));
+  async function setEntregada(id: string, value: boolean) {
+     const res = await pulseraEntregada(id, value);
+     if (res.error) toast({ title: "Error al actualizar la pulsa", description: "no se pudo entregar" });
+     else toast({ title: "Pulsera actualizada", description: "Pulsera actualizada correctamente" });
+     setGuests(prev => prev.map(g => g.id === id ? { ...g, pulseraEntregada: value } : g));
   }
 
   async function startVerify() {
@@ -282,7 +286,7 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
         <div style={{ display: "flex", gap: "0.75rem" }}>
           <button
             onClick={() => checkedId && setEntregada(checkedId, true)}
-            disabled={!isVerified || isEntregada}
+            disabled={false}
             style={{ flex: 1, padding: "0.85rem", borderRadius: "10px", border: "none", background: isVerified && !isEntregada ? "rgba(34,197,94,0.9)" : "#f0f0f0", color: isVerified && !isEntregada ? "#fff" : "#aaa", fontSize: "0.88rem", fontFamily: "inherit", fontWeight: 600, cursor: isVerified && !isEntregada ? "pointer" : "not-allowed", transition: "background 0.15s" }}
           >
             Entregar
@@ -340,7 +344,7 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
               </tr>
             </thead>
             <tbody>
-              {filteredGuests.map((g, i) => {
+              {filteredGuests.sort((a, b) => (a.nroPulsera? a.nroPulsera : 1) - (b.nroPulsera ? b.nroPulsera : 1)).map((g, i) => {
                 const isChecked = checkedId === g.id;
                 const isVer = verified.has(g.id);
                 const rowBg = g.pulseraEntregada ? "rgba(34,197,94,0.07)" : isVer ? "rgba(34,197,94,0.04)" : isChecked ? "rgba(107,95,248,0.06)" : i % 2 === 0 ? "#fff" : "#fafafa";
