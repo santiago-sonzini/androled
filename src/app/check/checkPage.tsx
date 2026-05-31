@@ -17,7 +17,7 @@ function genId() {
   return "local_" + Math.random().toString(36).slice(2, 12);
 }
 
-type ScanStatus = "idle" | "scanning" | "reading" | "writing" | "match" | "mismatch" | "error" | "continuous";
+type ScanStatus = "idle" | "scanning" | "reading" | "writing" | "match" | "mismatch" | "error" | "continuous" | "devolucion";
 
 export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
   const [guests, setGuests] = useState<AndroLedGuest[]>(initialGuests);
@@ -36,6 +36,7 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
   const [newPhone, setNewPhone] = useState("");
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
   const [continuousGuest, setContinuousGuest] = useState<AndroLedGuest | null>(null);
+  const [devolucionGuest, setDevolucionGuest] = useState<AndroLedGuest | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const isSupported = typeof window !== "undefined" && "NDEFReader" in window;
@@ -99,6 +100,7 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
     setScanStatus("idle");
     setScanMessage("");
     setContinuousGuest(null);
+    setDevolucionGuest(null);
   }
 
   async function startRead() {
@@ -175,6 +177,38 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
       ndef.onreadingerror = () => { addLog("[Continuo] onreadingerror"); };
     } catch (err: any) {
       if (err.name === "AbortError") { setScanStatus("idle"); setScanMessage(""); setContinuousGuest(null); }
+      else { addLog(`Excepción: ${err.message}`); setScanStatus("error"); setScanMessage(`Error: ${err.message}`); }
+    }
+  }
+
+  async function startDevolucionRead() {
+    if (!isSupported) { setScanStatus("error"); setScanMessage("Web NFC no está soportado."); return; }
+    try {
+      abortControllerRef.current = new AbortController();
+      setScanStatus("devolucion");
+      setScanMessage("Modo devolución activo. Acercá pulseras...");
+      setDevolucionGuest(null);
+      addLog("Iniciando modo devolución...");
+      const ndef = new (window as any).NDEFReader();
+      await ndef.scan({ signal: abortControllerRef.current.signal });
+      ndef.onreading = (event: any) => {
+        addLog(`[Devolución] Records recibidos: ${event.message.records.length}`);
+        for (const record of event.message.records) {
+          if (record.recordType === "text" || record.recordType === "url") {
+            const decoder = new TextDecoder(record.encoding || "utf-8");
+            const text = decoder.decode(record.data);
+            const scannedId = text.includes("/") ? text.split("/").pop() : text;
+            const found = scannedId ? guests.find(g => g.id === scannedId) ?? null : null;
+            setDevolucionGuest(found);
+            addLog(`[Devolución] ${found ? `Encontrado: ${found.name}` : `ID no encontrado: ${scannedId}`}`);
+            return;
+          }
+        }
+        addLog("[Devolución] No se encontró record de tipo text/url");
+      };
+      ndef.onreadingerror = () => { addLog("[Devolución] onreadingerror"); };
+    } catch (err: any) {
+      if (err.name === "AbortError") { setScanStatus("idle"); setScanMessage(""); setDevolucionGuest(null); }
       else { addLog(`Excepción: ${err.message}`); setScanStatus("error"); setScanMessage(`Error: ${err.message}`); }
     }
   }
@@ -273,6 +307,8 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
 
   const inputStyle: React.CSSProperties = { display: "block", marginTop: "0.4rem", width: "100%", padding: "0.7rem 0.9rem", borderRadius: "8px", border: "1px solid #e5e5e5", fontFamily: "inherit", fontSize: "0.9rem", color: "#111", background: "#fafafa", outline: "none", boxSizing: "border-box" };
 
+  const isBusy = scanStatus === "scanning" || scanStatus === "reading" || scanStatus === "writing" || scanStatus === "continuous" || scanStatus === "devolucion";
+
   return (
     <main style={{ fontFamily: "'DM Mono','Courier New',monospace", minHeight: "100vh", background: "#fff", color: "#111", display: "flex", flexDirection: "column", alignItems: "center", padding: "2rem 1.25rem", gap: "2rem" }}>
 
@@ -283,10 +319,10 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
 
       <section style={{ width: "100%", maxWidth: "420px", background: "#fff", border: "1px solid #e5e5e5", borderRadius: "16px", padding: "1.5rem", display: "flex", flexDirection: "column", gap: "1rem" }}>
         <div style={{ fontSize: "0.65rem", letterSpacing: "0.25em", textTransform: "uppercase", color: "#6b5ff8" }}>
-          {scanStatus === "scanning" ? "Esperando pulsera..." : scanStatus === "continuous" ? "Modo continuo activo" : "Invitado seleccionado"}
+          {scanStatus === "scanning" ? "Esperando pulsera..." : scanStatus === "continuous" ? "Modo continuo activo" : scanStatus === "devolucion" ? "Modo devolución activo" : "Invitado seleccionado"}
         </div>
 
-        {selectedGuest && scanStatus !== "continuous" ? (
+        {selectedGuest && scanStatus !== "continuous" && scanStatus !== "devolucion" ? (
           <div style={{ background: "#fafafa", border: "1px solid #e5e5e5", borderRadius: "10px", padding: "0.85rem" }}>
             <div style={{ fontWeight: 700, fontSize: "1rem" }}>{selectedGuest.name}</div>
             {selectedGuest.email && <div style={{ fontSize: "0.75rem", color: "#888", marginTop: "0.2rem" }}>{selectedGuest.email}</div>}
@@ -301,7 +337,7 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
               )}
             </div>
           </div>
-        ) : scanStatus !== "continuous" ? (
+        ) : scanStatus !== "continuous" && scanStatus !== "devolucion" ? (
           <div style={{ color: "#bbb", fontSize: "0.82rem" }}>Seleccioná un invitado de la tabla</div>
         ) : null}
 
@@ -325,7 +361,37 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
           </div>
         )}
 
-        {scanMessage && scanStatus !== "continuous" && (
+        {/* Devolucion read result */}
+        {scanStatus === "devolucion" && (
+          <div style={{ borderRadius: "12px", border: devolucionGuest ? "1px solid rgba(239,68,68,0.3)" : "1px solid rgba(239,68,68,0.15)", background: devolucionGuest ? "rgba(239,68,68,0.05)" : "rgba(239,68,68,0.02)", padding: "1.1rem", minHeight: "80px", display: "flex", flexDirection: "column", justifyContent: "center", gap: "0.5rem" }}>
+            {devolucionGuest ? (
+              <>
+                <div style={{ fontWeight: 700, fontSize: "1.15rem", color: "#111" }}>{devolucionGuest.name}</div>
+                <div style={{ display: "flex", gap: "1rem", fontSize: "0.78rem", color: "#555" }}>
+                  {devolucionGuest.mesa && <span>Mesa <strong>{devolucionGuest.mesa}</strong></span>}
+                  <span>Pulsera <strong>#{devolucionGuest.nroPulsera ?? "—"}</strong></span>
+                  <span style={{ color: devolucionGuest.pulseraEntregada ? "#16a34a" : "#f59e0b" }}>
+                    {devolucionGuest.pulseraEntregada ? "✓ Entregada" : "⏳ Pendiente"}
+                  </span>
+                </div>
+                <button
+                  onClick={async () => {
+                    await setEntregada(devolucionGuest.id, false);
+                    setGuests(prev => prev.map(g => g.id === devolucionGuest.id ? { ...g, pulseraEntregada: false } : g));
+                    setDevolucionGuest(prev => prev ? { ...prev, pulseraEntregada: false } : null);
+                  }}
+                  style={{ marginTop: "0.25rem", padding: "0.7rem", borderRadius: "8px", border: "none", background: "#dc2626", color: "#fff", fontSize: "0.88rem", fontFamily: "inherit", fontWeight: 600, cursor: "pointer", transition: "opacity 0.15s" }}
+                >
+                  Confirmar devolución
+                </button>
+              </>
+            ) : (
+              <div style={{ color: "#dc2626", fontSize: "0.82rem", textAlign: "center", opacity: 0.7 }}>↩ Acercá una pulsera...</div>
+            )}
+          </div>
+        )}
+
+        {scanMessage && scanStatus !== "continuous" && scanStatus !== "devolucion" && (
           <div style={{ padding: "0.5rem 1rem", borderRadius: "8px", fontSize: "0.8rem", background: badgeColor.bg, color: badgeColor.text, border: `1px solid ${badgeColor.border}` }}>
             {scanStatus === "scanning" ? "⟳ " : ""}{scanMessage}
           </div>
@@ -341,15 +407,15 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
           </button>
           <button
             onClick={scanStatus === "reading" ? cancelScan : startRead}
-            disabled={scanStatus === "scanning" || scanStatus === "continuous"}
-            style={{ flex: 1, padding: "0.85rem", borderRadius: "10px", border: "1px solid #e5e5e5", background: scanStatus === "reading" ? "rgba(239,68,68,0.1)" : "#fff", color: scanStatus === "reading" ? "#dc2626" : (scanStatus === "scanning" || scanStatus === "continuous" ? "#aaa" : "#111"), fontSize: "0.88rem", fontFamily: "inherit", fontWeight: 600, cursor: (scanStatus === "scanning" || scanStatus === "continuous") ? "not-allowed" : "pointer", transition: "background 0.15s" }}
+            disabled={scanStatus === "scanning" || scanStatus === "continuous" || scanStatus === "devolucion"}
+            style={{ flex: 1, padding: "0.85rem", borderRadius: "10px", border: "1px solid #e5e5e5", background: scanStatus === "reading" ? "rgba(239,68,68,0.1)" : "#fff", color: scanStatus === "reading" ? "#dc2626" : (scanStatus === "scanning" || scanStatus === "continuous" || scanStatus === "devolucion" ? "#aaa" : "#111"), fontSize: "0.88rem", fontFamily: "inherit", fontWeight: 600, cursor: (scanStatus === "scanning" || scanStatus === "continuous" || scanStatus === "devolucion") ? "not-allowed" : "pointer", transition: "background 0.15s" }}
           >
             {scanStatus === "reading" ? "Cancelar" : "Leer"}
           </button>
           <button
             onClick={scanStatus === "writing" ? cancelScan : openWriteModal}
-            disabled={(!checkedId && scanStatus !== "writing") || scanStatus === "scanning" || scanStatus === "reading" || scanStatus === "continuous"}
-            style={{ flex: 1, padding: "0.85rem", borderRadius: "10px", border: "1px solid #e5e5e5", background: scanStatus === "writing" ? "rgba(239,68,68,0.1)" : ((!checkedId || scanStatus === "scanning" || scanStatus === "reading" || scanStatus === "continuous") ? "#f9f9f9" : "#fff"), color: scanStatus === "writing" ? "#dc2626" : ((!checkedId || scanStatus === "scanning" || scanStatus === "reading" || scanStatus === "continuous") ? "#bbb" : "#111"), fontSize: "0.88rem", fontFamily: "inherit", fontWeight: 600, cursor: "pointer", transition: "background 0.15s" }}
+            disabled={(!checkedId && scanStatus !== "writing") || scanStatus === "scanning" || scanStatus === "reading" || scanStatus === "continuous" || scanStatus === "devolucion"}
+            style={{ flex: 1, padding: "0.85rem", borderRadius: "10px", border: "1px solid #e5e5e5", background: scanStatus === "writing" ? "rgba(239,68,68,0.1)" : ((!checkedId || scanStatus === "scanning" || scanStatus === "reading" || scanStatus === "continuous" || scanStatus === "devolucion") ? "#f9f9f9" : "#fff"), color: scanStatus === "writing" ? "#dc2626" : ((!checkedId || scanStatus === "scanning" || scanStatus === "reading" || scanStatus === "continuous" || scanStatus === "devolucion") ? "#bbb" : "#111"), fontSize: "0.88rem", fontFamily: "inherit", fontWeight: 600, cursor: "pointer", transition: "background 0.15s" }}
           >
             {scanStatus === "writing" ? "Cancelar" : "Grabar tag"}
           </button>
@@ -371,8 +437,8 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
           </button>
           <button
             onClick={openNewGuestModal}
-            disabled={scanStatus === "scanning" || scanStatus === "reading" || scanStatus === "writing" || scanStatus === "continuous"}
-            style={{ flex: 1, padding: "0.85rem", borderRadius: "10px", border: "1px solid #e5e5e5", background: "#fff", color: "#6b5ff8", fontSize: "0.88rem", fontFamily: "inherit", fontWeight: 600, cursor: "pointer", transition: "background 0.15s" }}
+            disabled={isBusy}
+            style={{ flex: 1, padding: "0.85rem", borderRadius: "10px", border: "1px solid #e5e5e5", background: "#fff", color: isBusy ? "#bbb" : "#6b5ff8", fontSize: "0.88rem", fontFamily: "inherit", fontWeight: 600, cursor: isBusy ? "not-allowed" : "pointer", transition: "background 0.15s" }}
           >
             + Nuevo
           </button>
@@ -381,13 +447,22 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
         {/* Continuous read button */}
         <button
           onClick={scanStatus === "continuous" ? cancelScan : startContinuousRead}
-          disabled={scanStatus === "scanning" || scanStatus === "reading" || scanStatus === "writing"}
-          style={{ width: "100%", padding: "0.85rem", borderRadius: "10px", border: scanStatus === "continuous" ? "none" : "1px solid rgba(245,158,11,0.4)", background: scanStatus === "continuous" ? "rgba(239,68,68,0.1)" : "rgba(245,158,11,0.06)", color: scanStatus === "continuous" ? "#dc2626" : "#d97706", fontSize: "0.88rem", fontFamily: "inherit", fontWeight: 600, cursor: (scanStatus === "scanning" || scanStatus === "reading" || scanStatus === "writing") ? "not-allowed" : "pointer", transition: "background 0.15s", letterSpacing: "0.04em" }}
+          disabled={scanStatus === "scanning" || scanStatus === "reading" || scanStatus === "writing" || scanStatus === "devolucion"}
+          style={{ width: "100%", padding: "0.85rem", borderRadius: "10px", border: scanStatus === "continuous" ? "none" : "1px solid rgba(245,158,11,0.4)", background: scanStatus === "continuous" ? "rgba(239,68,68,0.1)" : "rgba(245,158,11,0.06)", color: scanStatus === "continuous" ? "#dc2626" : "#d97706", fontSize: "0.88rem", fontFamily: "inherit", fontWeight: 600, cursor: (scanStatus === "scanning" || scanStatus === "reading" || scanStatus === "writing" || scanStatus === "devolucion") ? "not-allowed" : "pointer", transition: "background 0.15s", letterSpacing: "0.04em", opacity: (scanStatus === "scanning" || scanStatus === "reading" || scanStatus === "writing" || scanStatus === "devolucion") ? 0.4 : 1 }}
         >
           {scanStatus === "continuous" ? "⏹ Detener lectura continua" : "⟳ Iniciar lectura continua"}
         </button>
 
-        {readGuest && scanStatus !== "continuous" && (
+        {/* Devolucion button */}
+        <button
+          onClick={scanStatus === "devolucion" ? cancelScan : startDevolucionRead}
+          disabled={scanStatus === "scanning" || scanStatus === "reading" || scanStatus === "writing" || scanStatus === "continuous"}
+          style={{ width: "100%", padding: "0.85rem", borderRadius: "10px", border: scanStatus === "devolucion" ? "none" : "1px solid rgba(239,68,68,0.3)", background: scanStatus === "devolucion" ? "rgba(239,68,68,0.1)" : "rgba(239,68,68,0.04)", color: "#dc2626", fontSize: "0.88rem", fontFamily: "inherit", fontWeight: 600, cursor: (scanStatus === "scanning" || scanStatus === "reading" || scanStatus === "writing" || scanStatus === "continuous") ? "not-allowed" : "pointer", transition: "background 0.15s", letterSpacing: "0.04em", opacity: (scanStatus === "scanning" || scanStatus === "reading" || scanStatus === "writing" || scanStatus === "continuous") ? 0.4 : 1 }}
+        >
+          {scanStatus === "devolucion" ? "⏹ Detener modo devolución" : "↩ Iniciar modo devolución"}
+        </button>
+
+        {readGuest && scanStatus !== "continuous" && scanStatus !== "devolucion" && (
           <div style={{ background: "rgba(107,95,248,0.05)", border: "1px solid rgba(107,95,248,0.15)", borderRadius: "10px", padding: "0.85rem" }}>
             <div style={{ fontSize: "0.62rem", color: "#6b5ff8", letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "0.4rem" }}>Pulsera leída</div>
             <div style={{ fontWeight: 700, fontSize: "1rem" }}>{readGuest.name}</div>
@@ -442,7 +517,7 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
                 const isVer = verified.has(g.id);
                 const rowBg = g.pulseraEntregada ? "rgba(34,197,94,0.07)" : isVer ? "rgba(34,197,94,0.04)" : isChecked ? "rgba(107,95,248,0.06)" : i % 2 === 0 ? "#fff" : "#fafafa";
                 return (
-                  <tr key={g.id} onClick={() => { if (scanStatus !== "scanning" && scanStatus !== "continuous") setCheckedId(isChecked ? null : g.id); }} style={{ borderBottom: "1px solid #f0f0f0", background: rowBg, cursor: (scanStatus === "scanning" || scanStatus === "continuous") ? "default" : "pointer" }}>
+                  <tr key={g.id} onClick={() => { if (scanStatus !== "scanning" && scanStatus !== "continuous" && scanStatus !== "devolucion") setCheckedId(isChecked ? null : g.id); }} style={{ borderBottom: "1px solid #f0f0f0", background: rowBg, cursor: (scanStatus === "scanning" || scanStatus === "continuous" || scanStatus === "devolucion") ? "default" : "pointer" }}>
                     <td style={{ ...td, textAlign: "center" }}>
                       {isVer ? (
                         <span style={{ color: "#16a34a", fontSize: "1rem" }}>✓</span>
