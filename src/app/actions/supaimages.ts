@@ -7,18 +7,17 @@ const supabase = createClient(
     env.SUPABASE_PUBLISHABLE_KEY
 );
 
-export async function getGuestPhotoUrl(eventName: string, guestId: string): Promise<string | null> {
-  console.log("🚀 ~ getGuestPhotoUrl ~ eventName:", eventName)
+export async function getGuestPhotoUrl(eventName: string, guestName: string): Promise<string | null> {
+  const normalizedGuest = guestName.trim().toUpperCase().replace(/\s+/g, '_');
+
   const { data, error } = await supabase.storage
     .from('eventos')
-    .list(eventName, { limit: 1 });
-    
-    console.log("🚀 ~ getGuestPhotoUrl ~ data:", data)
-  console.log("🚀 ~ getGuestPhotoUrl ~ error:", error)
+    .list(eventName, { limit: 100 });
+    console.log("🚀 ~ getGuestPhotoUrl ~ error:", error)
+  console.log("🚀 ~ getGuestPhotoUrl ~ data:", data)
   if (error || !data || data.length === 0) return null;
 
-
-  const file = data.find(f => f.name.includes(guestId));
+  const file = data.find(f => f.name.includes(normalizedGuest));
   if (!file) return null;
 
   const { data: urlData } = supabase.storage

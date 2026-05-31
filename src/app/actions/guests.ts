@@ -610,6 +610,8 @@ Este email confirma tu asistencia al evento. Guardalo para referencia.
 export async function getGuestById(id: string) {
   try {
     const guest = await db.androLedGuest.findUnique({ where: { id } , include: { event: true } });
+    console.log("🚀 ~ getGuestById ~ guest:", guest)
+    
     return guest;
   } catch (error) {
     console.error("Unexpected error:", error);
