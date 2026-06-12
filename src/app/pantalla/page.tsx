@@ -447,14 +447,9 @@ function CountdownRing({
 // COMPONENTE PRINCIPAL — Pantalla del salón
 // ─────────────────────────────────────────────
 
-export default function PantallaSalon({
-  nombre = "Martina",
-  qrUrl,
-}: {
-  nombre?: string;
-  /** URL que codifica el QR; por defecto `${origin}/{cuid generado}` */
-  qrUrl?: string;
-}) {
+export default function PantallaSalon() {
+  const qrUrl = "/[cuid]";
+  const nombre = "Martina";
   const [data, setData] = useState<PantallaData | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [scale, setScale] = useState(1);

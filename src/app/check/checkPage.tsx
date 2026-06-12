@@ -266,11 +266,12 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
         { signal: abortControllerRef.current.signal }
       );
       const newGuest: AndroLedGuest = {
-        id: newId, eventId: "", name: newName.trim(), email: null,
+        id: newId, name: newName.trim(), email: null,
         phone: newPhone.trim() || null, hasDietRestriction: false, dietRestrictionComment: null,
         rsvp: true, isMainGuest: true, comments: null, createdAt: new Date(),
         plusOne: false, goesWith: null, mesa: newMesa.trim() ? parseInt(newMesa.trim()) : null,
         nroPulsera: newPulsera.trim() ? parseInt(newPulsera.trim()) : null, pulseraEntregada: false,
+        avatar: null,
       };
       await createGuest(newGuest);
       setGuests(prev => [newGuest, ...prev]);
