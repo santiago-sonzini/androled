@@ -448,7 +448,6 @@ function CountdownRing({
 // ─────────────────────────────────────────────
 
 export default function PantallaSalon() {
-  const qrUrl = "/[cuid]";
   const nombre = "Martina";
   const [data, setData] = useState<PantallaData | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -457,7 +456,7 @@ export default function PantallaSalon() {
   const [takeoverName, setTakeoverName] = useState<string | null>(null);
   const [postTrivia, setPostTrivia] = useState(false);
   const [bumped, setBumped] = useState<Set<string>>(new Set());
-  const [qrTarget, setQrTarget] = useState<string | null>(qrUrl ?? null);
+  const [qrTarget, setQrTarget] = useState<string | null>(null);
   const [ctrlOpen, setCtrlOpen] = useState(false);
   const [launching, setLaunching] = useState<"trivia" | "codigo" | null>(null);
   const [launchMsg, setLaunchMsg] = useState<{ text: string; err: boolean } | null>(null);
@@ -475,8 +474,8 @@ export default function PantallaSalon() {
   // efecto (SSR-safe). La ruta /:id ya crea el guest+álbum al vuelo
   // (vía loadAlbum) la primera vez que alguien la visita.
   useEffect(() => {
-    if (!qrUrl) setQrTarget(`${window.location.origin}/${createId()}`);
-  }, [qrUrl]);
+    if (true) setQrTarget(`${window.location.origin}/${createId()}`);
+  }, []);
 
   // CSS inyectado una vez
   useEffect(() => {
