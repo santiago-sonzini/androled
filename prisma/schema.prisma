@@ -18,7 +18,6 @@ model Event {
   admin     Admin?    @relation(fields: [adminId], references: [id])
   guests    Guest[]
   Message   Message[]
-  androGuest AndroLedGuest[]
 }
 
 model Guest {
@@ -60,26 +59,64 @@ model Message {
   Event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
 }
 
-
 model AndroLedGuest {
-  id                     String   @id @default(cuid())
-  eventId                String
+  id                     String       @id @default(cuid())
   name                   String
   email                  String?
   phone                  String?
-  hasDietRestriction     Boolean  @default(false)
+  hasDietRestriction     Boolean      @default(false)
   dietRestrictionComment String?
-  rsvp                   Boolean  @default(true)
-  isMainGuest            Boolean  @default(false)
+  rsvp                   Boolean      @default(true)
+  isMainGuest            Boolean      @default(false)
   comments               String?
-  createdAt              DateTime @default(now())
-  plusOne                Boolean  @default(false)
+  createdAt              DateTime     @default(now())
+  plusOne                Boolean      @default(false)
   goesWith               String?
   mesa                   Int?
   nroPulsera             Int?
-  event                  Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  pulseraEntregada       Boolean  @default(false)
+  pulseraEntregada       Boolean      @default(false)
+  avatar                 String?
+  figus                  FigusAlbum?
+}
 
+model FigusAlbum {
+  id        String        @id @default(cuid())
+  guestId   String        @unique
+  counts    Json          @default("{}")
+  packsLeft String[]      @default(["start"])
+  guest     AndroLedGuest @relation(fields: [guestId], references: [id], onDelete: Cascade)
+  updatedAt DateTime      @updatedAt
+}
 
-  @@index([eventId])
+model FigusTrivia {
+  id              String    @id @default(cuid())
+  eventId         String
+  question        String
+  options         String[]
+  answer          Int
+  active          Boolean   @default(false)
+  activeAt        DateTime?
+  durationSeconds Int?
+  createdAt       DateTime  @default(now())
+}
+
+model FigusCodigo {
+  id              String    @id @default(cuid())
+  eventId         String
+  code            String
+  active          Boolean   @default(false)
+  activeAt        DateTime?
+  durationSeconds Int?
+  usedBy          String[]  @default([])
+  createdAt       DateTime  @default(now())
+}
+
+model FigusCardStock {
+  id       String @id @default(cuid())
+  eventId  String
+  cardId   Int
+  maxCount Int    @default(10)
+  issued   Int    @default(0)
+
+  @@unique([eventId, cardId])
 }
