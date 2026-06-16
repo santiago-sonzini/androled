@@ -1,14 +1,51 @@
 "use client";
 import { useState, useCallback, useRef, useEffect } from "react";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import {
   loadAlbum,
   openPack,
+  grantPack,
+  redeemCodigo,
   checkTrivia,
   answerTrivia,
-  checkCodigo,
+  saveAlbumState,
   saveGuestProfile,
 } from "../actions/album";
+import {
+  loadReino,
+  publishRequest,
+  cancelRequest,
+  fulfillRequest,
+  connectByCode,
+} from "../actions/reino";
 import MagicMIntro from "@/components/juego/magic";
+
+// ─────────────────────────────────────────────
+// SUPABASE (cliente browser, singleton) — realtime como señal de
+// invalidación: ante cambios en las tablas del Reino, se re-pide loadReino.
+// ─────────────────────────────────────────────
+
+let _sb: SupabaseClient | null = null;
+function getSupabase(): SupabaseClient | null {
+  if (typeof window === "undefined") return null;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) return null;
+  if (!_sb) _sb = createClient(url, key, { realtime: { params: { eventsPerSecond: 5 } } });
+  return _sb;
+}
+
+// Tablas globales del Reino (feed/doradas/premios/pedidos). FigusAlbum se
+// escucha aparte, filtrado a MI fila, para no refetchear ante cada cambio
+// de álbum ajeno.
+const REINO_TABLES = ["FigusEvent", "FigusGold", "FigusPrize", "FigusTradeRequest"] as const;
+
+type ReinoData = Awaited<ReturnType<typeof loadReino>>;
+type ReinoFeed = ReinoData["feed"][number];
+type ReinoTop = ReinoData["top"][number];
+type ReinoGold = ReinoData["golds"][number];
+type ReinoPrize = ReinoData["prizes"][number];
+type ReinoSalonReq = ReinoData["salonRequests"][number];
 
 // ─────────────────────────────────────────────
 // TYPES
@@ -34,17 +71,26 @@ interface Avatar {
   n: string;
 }
 
-type Screen = "intro" | "album" | "done";
+type Tab = "album" | "trade" | "prizes" | "reino" | "account";
+type Screen = "intro" | "app";
 
-interface State {
+interface Core {
   screen: Screen;
+  tab: Tab;
   name: string;
   avatar: Avatar | null;
+  selfie: string | null;
   counts: Record<number, number>;
-  // packsRaw refleja packsLeft de la DB tal cual:
-  //   "start" = sobre pendiente · "used:start" = ya abierto
+  // packsRaw refleja packsLeft de la DB tal cual: tokens "start",
+  // "codigo#5", "carta#2"… y marcas "used:start".
   packsRaw: string[];
-  guestIdx: number;
+  nroPulsera: number | null;
+  mesa: number | null;
+}
+
+// Estado local del jugador (no del Reino): el sobre regalo en camino.
+interface Local {
+  gift: number | null;
 }
 
 interface TriviaData {
@@ -55,15 +101,30 @@ interface TriviaData {
 
 type SheetMode =
   | { type: "none" }
-  | { type: "pack"; srcKey: string }
-  | { type: "pack-reveal"; cards: { f: Fig; isNew: boolean }[]; srcKey: string }
+  | { type: "pack"; token: string }
+  | {
+      type: "pack-reveal";
+      cards: { f: Fig; isNew: boolean }[];
+      token: string;
+      goldWon: number | null;
+      prizeNm: string | null;
+    }
   | { type: "codigo-entry" }
   | { type: "trivia"; trivia: TriviaData }
-  | { type: "trade-code" }
-  | { type: "trade-propose" };
+  | { type: "ig" }
+  | { type: "carta" }
+  | { type: "dorada"; idx: number }
+  | { type: "completion"; prizeNm: string | null }
+  | { type: "pick-request" }
+  | {
+      type: "code-result";
+      otherName: string;
+      gave: { nm: string; g: string } | null;
+      got: { nm: string; g: string } | null;
+    };
 
 // ─────────────────────────────────────────────
-// PACK STATE HELPERS (espejo de la convención del server)
+// PACK / STATE HELPERS (espejo del server)
 // ─────────────────────────────────────────────
 
 const USED_PREFIX = "used:";
@@ -71,25 +132,30 @@ const USED_PREFIX = "used:";
 function pendingPacks(raw: string[]): string[] {
   return raw.filter((k) => !k.startsWith(USED_PREFIX));
 }
-
 function usedPacks(raw: string[]): string[] {
   return raw
     .filter((k) => k.startsWith(USED_PREFIX))
     .map((k) => k.slice(USED_PREFIX.length));
 }
+function parseToken(token: string): { key: string; n: number } {
+  const [key, raw] = token.split("#");
+  const val = raw ? parseInt(raw, 10) : NaN;
+  const def = PACK_DEFAULT[key ?? ""] ?? 4;
+  return { key: key ?? "", n: Number.isFinite(val) && val > 0 ? val : def };
+}
+
+const PACK_DEFAULT: Record<string, number> = {
+  start: 6,
+  trivia: 4,
+  codigo: 4,
+  carta: 2,
+  gift: 4,
+  ig: 1,
+};
 
 // ─────────────────────────────────────────────
 // DATA
 // ─────────────────────────────────────────────
-
-// La "M" en grilla de 3 columnas (ids 1,3,4,5,6,7,9):
-//
-//  Col:  1    2    3
-//  Row1: [1]       [3]   ←  pata izq  +  pata der
-//  Row2: [4]  [5]  [6]   ←  centro: V del medio
-//  Row3: [7]       [9]   ←  base izq  +  base der
-//
-// ids 2,8,10-15 son comunes/raras/épicas normales
 
 const FIGS: Fig[] = [
   { id: 1, g: "🐚", nm: "Marti Sirena", film: "La Sirenita", r: "m" },
@@ -101,22 +167,10 @@ const FIGS: Fig[] = [
   { id: 7, g: "👠", nm: "Marti Cenicienta", film: "Cenicienta", r: "m" },
   { id: 8, g: "💜", nm: "Marti Rapunzel", film: "Enredados", r: "comun" },
   { id: 9, g: "🍎", nm: "Marti Blanca", film: "Blancanieves", r: "m" },
-  {
-    id: 10,
-    g: "🌿",
-    nm: "Marti Aurora",
-    film: "La Bella Durmiente",
-    r: "comun",
-  },
+  { id: 10, g: "🌿", nm: "Marti Aurora", film: "La Bella Durmiente", r: "comun" },
   { id: 11, g: "🍃", nm: "Marti Pocahontas", film: "Pocahontas", r: "rara" },
   { id: 12, g: "🏹", nm: "Marti Valiente", film: "Brave", r: "rara" },
-  {
-    id: 13,
-    g: "🐸",
-    nm: "Marti Tiana",
-    film: "La Princesa y el Sapo",
-    r: "rara",
-  },
+  { id: 13, g: "🐸", nm: "Marti Tiana", film: "La Princesa y el Sapo", r: "rara" },
   { id: 14, g: "🦋", nm: "Marti Encanto", film: "Encanto", r: "epica" },
   { id: 15, g: "🖤", nm: "Marti Maléfica", film: "Maléfica", r: "epica" },
 ];
@@ -138,33 +192,77 @@ const AVATARS: Avatar[] = [
   { g: "🏰", n: "Castillo" },
 ];
 
+// Fuentes de sobres (ic/título/descripción de cada tile del álbum).
+const SRC_META: Record<string, { ic: string; t: string; d: string }> = {
+  start: { ic: "🎁", t: "Sobre de bienvenida", d: "Tu sobre al entrar" },
+  codigo: { ic: "🎤", t: "Código de entrevista", d: "+1 a +10 figus · entrevistas y sorpresas" },
+  trivia: { ic: "💡", t: "Trivia Disney", d: "Ganá la pregunta de la pantalla" },
+  carta: { ic: "🃏", t: "Sobre escondido", d: "Buscalos por el salón · +2 c/u" },
+  ig: { ic: "📸", t: "Seguinos en IG", d: "@andro.show · +1 figu" },
+  gift: { ic: "🎁", t: "Sobre de regalo", d: "Cae desde el Reino" },
+};
+
+const SEC_TOTAL = 10; // colgantes RGB de Marti
+const CARTAS_MAX = 3; // sobres escondidos por persona
+const INSTAGRAM_URL = "https://instagram.com/andro.show";
+
+function fig(id: number): Fig {
+  return FIGS.find((f) => f.id === id)!;
+}
+
 // Heurística simple: nombres terminados en "a" → femenino.
-// (La versión anterior tenía condiciones contradictorias y
-// clasificaba "jose" como femenino.)
 function inferGenero(nombre: string): "f" | "m" {
   const first = nombre.trim().toLowerCase().split(/\s+/)[0] ?? "";
   return first.endsWith("a") ? "f" : "m";
 }
 
-const GUESTS = [
-  "Sofi · mesa 4",
-  "Tomi · mesa 7",
-  "la Tía Susana",
-  "Juli · mesa 2",
-  "Nacho · barra",
-  "Cande · mesa 9",
-];
+// Cara del invitado: la selfie si existe, si no el glyph del avatar.
+function Face({
+  avatar,
+  selfie,
+  fallback = "👑",
+}: {
+  avatar: Avatar | null;
+  selfie: string | null;
+  fallback?: string;
+}) {
+  if (selfie) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img className="fk-face-img" src={selfie} alt="" />;
+  }
+  return <>{avatar ? avatar.g : fallback}</>;
+}
 
-const SRC_META: Record<string, { ic: string; t: string; d: string }> = {
-  start: { ic: "🎁", t: "Sobre de bienvenida", d: "Tu sobre al entrar" },
-  codigo: {
-    ic: "🔢",
-    t: "Código en pantalla",
-    d: "Apareció en la pantalla — ¡tipealo!",
-  },
-  trivia: { ic: "💡", t: "Trivia Disney", d: "Ganá la pregunta" },
-  carta: { ic: "🃏", t: "Carta escondida", d: "Encontraste una carta NFC" },
-};
+// Recorta una imagen a un cuadrado y la comprime a un data URL JPEG chico,
+// todo en el dispositivo (no se sube la foto cruda).
+async function selfieFromFile(file: File, size = 128): Promise<string | null> {
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    const bmp = await createImageBitmap(file, { imageOrientation: "from-image" }).catch(() => null);
+    if (bmp) {
+      const m = Math.min(bmp.width, bmp.height);
+      ctx.drawImage(bmp, (bmp.width - m) / 2, (bmp.height - m) / 2, m, m, 0, 0, size, size);
+      return canvas.toDataURL("image/jpeg", 0.8);
+    }
+    // fallback para navegadores sin createImageBitmap
+    return await new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const m = Math.min(img.width, img.height);
+        ctx.drawImage(img, (img.width - m) / 2, (img.height - m) / 2, m, m, 0, 0, size, size);
+        URL.revokeObjectURL(img.src);
+        resolve(canvas.toDataURL("image/jpeg", 0.8));
+      };
+      img.onerror = () => resolve(null);
+      img.src = URL.createObjectURL(file);
+    });
+  } catch {
+    return null;
+  }
+}
 
 // ─────────────────────────────────────────────
 // CSS (injected once)
@@ -176,7 +274,7 @@ const CSS = `
 :root {
   --bg-0:#0c0920; --bg-1:#1b1340; --bg-2:#2a1b52; --bg-3:#140d31;
   --gold-1:#f6dd99; --gold-2:#e3b85f; --gold-3:#b98a35;
-  --rose:#f1a8c6; --rose-deep:#d76a98;
+  --rose:#f1a8c6; --rose-deep:#d76a98; --green:#8ce6b0;
   --ink:#f6f0e6; --muted:#b6abd4; --muted-2:#8a7eb0;
   --line:rgba(246,221,153,.18);
   --glass:rgba(34,24,66,.55);
@@ -190,8 +288,6 @@ body {
   min-height: 100vh; overflow: hidden;
 }
 
-/* device — pantalla completa real, sin marco de teléfono.
-   position:fixed lo independiza de cualquier layout padre de Next. */
 .fk-device {
   position: fixed; inset: 0; width: 100%; height: 100dvh;
   background:
@@ -201,26 +297,17 @@ body {
   overflow: hidden; display: flex; flex-direction: column;
 }
 
-/* stars */
 .fk-stars { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
-.fk-star {
-  position: absolute; background: #fff; border-radius: 50%;
-  animation: fk-tw 4s infinite ease-in-out;
-}
-@keyframes fk-tw {
-  0%,100% { opacity: .12; transform: scale(.7); }
-  50%      { opacity: .85; transform: scale(1); }
-}
+.fk-star { position: absolute; background: #fff; border-radius: 50%; animation: fk-tw 4s infinite ease-in-out; }
+@keyframes fk-tw { 0%,100% { opacity: .12; transform: scale(.7); } 50% { opacity: .85; transform: scale(1); } }
 
-/* castle */
 .fk-castle { position: absolute; bottom: 0; left: 0; right: 0; height: 230px; z-index: 0; opacity: .5; pointer-events: none; }
 .fk-castle svg { width: 100%; height: 100%; display: block; max-width: 560px; margin: 0 auto; }
 
-/* scroll area */
 .fk-scroll { position: relative; z-index: 2; flex: 1; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; }
 .fk-pad    { padding: 26px 22px 40px; max-width: 560px; margin: 0 auto; }
+.fk-pad.app { padding-bottom: 120px; }
 
-/* typography */
 .fk-kicker { font-family: 'Mulish'; font-weight: 700; font-size: 11px; letter-spacing: .34em; text-transform: uppercase; color: var(--gold-2); }
 .fk-title  {
   font-family: 'Cormorant Garamond'; font-weight: 700; line-height: .92; margin: 6px 0 0;
@@ -232,7 +319,6 @@ body {
 .fk-serif { font-family: 'Cormorant Garamond'; }
 .fk-lead  { color: var(--muted); font-size: 15px; line-height: 1.5; font-weight: 500; }
 
-/* buttons */
 .fk-btn {
   appearance: none; border: 0; cursor: pointer;
   font-family: 'Mulish'; font-weight: 800; font-size: 15px; letter-spacing: .02em;
@@ -245,8 +331,8 @@ body {
 .fk-btn:disabled { opacity: .4; filter: grayscale(.4); cursor: not-allowed; }
 .fk-btn.ghost   { background: transparent; color: var(--gold-1); box-shadow: 0 0 0 1px var(--line) inset; }
 .fk-btn.rose    { background: linear-gradient(180deg, var(--rose), var(--rose-deep)); color: #3a0f23; box-shadow: 0 10px 30px rgba(215,106,152,.35); }
+.fk-btn.sm      { padding: 11px 14px; font-size: 13px; border-radius: 12px; width: auto; }
 
-/* inputs */
 .fk-field {
   width: 100%; background: rgba(12,9,32,.55); border: 1px solid var(--line); border-radius: 14px;
   padding: 15px 16px; color: var(--ink); font-family: 'Mulish'; font-weight: 600; font-size: 16px; outline: none;
@@ -255,7 +341,6 @@ body {
 .fk-field::placeholder { color: var(--muted-2); }
 .fk-field:focus { border-color: var(--gold-2); box-shadow: 0 0 0 3px rgba(227,184,95,.14); }
 
-/* avatar grid */
 .fk-avatars { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; margin-top: 14px; }
 .fk-av {
   aspect-ratio: 1; border-radius: 16px; display: flex; flex-direction: column;
@@ -270,192 +355,96 @@ body {
   background: linear-gradient(180deg, var(--gold-1), var(--gold-2)); color: #2a1c08; font-size: 11px; font-weight: 900;
   display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(227,184,95,.5);
 }
+.fk-avatars.dim, .fk-avhint.dim { opacity: .32; filter: grayscale(.75); transition: opacity .25s, filter .25s; }
+
+/* selfie box */
+.fk-selfiebox { display: flex; align-items: center; gap: 12px; background: var(--glass); border: 1px solid rgba(255,255,255,.06); border-radius: 16px; padding: 12px; cursor: pointer; transition: .15s; position: relative; margin-top: 8px; text-align: left; }
+.fk-selfiebox.sel { border-color: var(--gold-1); background: rgba(227,184,95,.14); }
+.fk-selfiebox.sel::after { content: "✓"; position: absolute; top: -7px; right: -7px; width: 20px; height: 20px; border-radius: 50%; background: linear-gradient(180deg, var(--gold-1), var(--gold-2)); color: #2a1c08; font-size: 11px; font-weight: 900; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(227,184,95,.5); }
+.fk-selfiebox .ph { width: 52px; height: 52px; border-radius: 50%; flex: 0 0 auto; overflow: hidden; background: rgba(227,184,95,.13); display: flex; align-items: center; justify-content: center; font-size: 24px; }
+.fk-selfiebox .ph img { width: 100%; height: 100%; object-fit: cover; }
+.fk-selfiebox .tx .t { font-weight: 800; font-size: 14px; }
+.fk-selfiebox .tx .d { font-size: 11px; color: var(--muted); font-weight: 600; margin-top: 2px; }
+/* foto en avatares (header, cuenta, ticket) */
+.fk-face-img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
+.fk-me { overflow: hidden; }
 
 /* topbar */
-.fk-topbar {
-  position: relative; z-index: 3; display: flex; align-items: center; gap: 12px; padding: 18px 20px 14px;
-  max-width: 560px; margin: 0 auto; width: 100%;
-}
-.fk-topbar-bg {
-  position: relative; z-index: 3;
-  background: linear-gradient(180deg, rgba(12,9,32,.6), transparent);
-}
-.fk-me {
-  width: 46px; height: 46px; border-radius: 14px; display: flex; align-items: center; justify-content: center;
-  font-size: 24px; background: rgba(227,184,95,.14); border: 1px solid var(--line); flex: 0 0 auto;
-}
+.fk-topbar { position: relative; z-index: 3; display: flex; align-items: center; gap: 12px; padding: 18px 20px 14px; max-width: 560px; margin: 0 auto; width: 100%; }
+.fk-topbar-bg { position: relative; z-index: 3; background: linear-gradient(180deg, rgba(12,9,32,.6), transparent); }
+.fk-me { width: 46px; height: 46px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 24px; background: rgba(227,184,95,.14); border: 1px solid var(--line); flex: 0 0 auto; }
 .fk-me-info { flex: 1; min-width: 0; }
 .fk-me-info .n { font-weight: 800; font-size: 15px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fk-me-info .s { font-size: 11px; color: var(--muted); font-weight: 600; }
 .fk-prog { flex: 0 0 auto; text-align: right; }
-.fk-prog .big {
-  font-family: 'Cormorant Garamond'; font-weight: 700; font-size: 28px; line-height: .9;
-  background: linear-gradient(180deg,#fff,var(--gold-1)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
-}
+.fk-prog .big { font-family: 'Cormorant Garamond'; font-weight: 700; font-size: 28px; line-height: .9; background: linear-gradient(180deg,#fff,var(--gold-1)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
 .fk-prog .lbl { font-size: 9px; letter-spacing: .18em; color: var(--muted); text-transform: uppercase; font-weight: 700; }
 .fk-bar { height: 5px; border-radius: 99px; background: rgba(255,255,255,.08); margin: 0 auto; width: calc(100% - 40px); max-width: 520px; overflow: hidden; position: relative; z-index: 3; }
 .fk-bar-fill { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--rose), var(--gold-1)); transition: width .6s cubic-bezier(.2,.8,.2,1); }
 
 /* fig grid */
 .fk-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 11px; margin-top: 6px; }
-.fk-fig {
-  position: relative; border-radius: 14px; aspect-ratio: .72; overflow: hidden;
-  border: 1px solid rgba(255,255,255,.07);
-  background: linear-gradient(160deg, rgba(40,28,80,.7), rgba(20,13,49,.7));
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  text-align: center; padding: 8px 6px;
-}
-.fk-fig.empty {
-  background: repeating-linear-gradient(135deg, rgba(255,255,255,.025) 0 8px, transparent 8px 16px), rgba(12,9,32,.5);
-  border-style: dashed; border-color: rgba(255,255,255,.1);
-}
+.fk-fig { position: relative; border-radius: 14px; aspect-ratio: .72; overflow: hidden; border: 1px solid rgba(255,255,255,.07); background: linear-gradient(160deg, rgba(40,28,80,.7), rgba(20,13,49,.7)); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 8px 6px; }
+.fk-fig.empty { background: repeating-linear-gradient(135deg, rgba(255,255,255,.025) 0 8px, transparent 8px 16px), rgba(12,9,32,.5); border-style: dashed; border-color: rgba(255,255,255,.1); }
 .fk-fig.empty .q { font-family: 'Cormorant Garamond'; font-size: 32px; color: var(--muted-2); font-weight: 700; }
 .fk-fig .glyph   { font-size: 34px; filter: drop-shadow(0 4px 10px rgba(0,0,0,.4)); }
 .fk-fig .fname   { font-family: 'Cormorant Garamond'; font-weight: 600; font-size: 14px; line-height: 1; margin-top: 7px; color: #fff; }
 .fk-fig .film    { font-size: 8.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 700; margin-top: 4px; }
 .fk-fig .num     { position: absolute; top: 6px; left: 7px; font-size: 9px; font-weight: 800; color: var(--muted-2); }
-.fk-fig.have::after {
-  content: ""; position: absolute; inset: 0;
-  background: linear-gradient(180deg, transparent 55%, rgba(227,184,95,.10)); pointer-events: none;
-}
-.fk-fig .dupe-q {
-  position: absolute; bottom: 6px; right: 6px;
-  background: linear-gradient(180deg, var(--rose), var(--rose-deep));
-  color: #3a0f23; font-size: 9px; font-weight: 900; border-radius: 8px; padding: 2px 6px;
-  box-shadow: 0 4px 10px rgba(0,0,0,.3);
-}
+.fk-fig.have::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 55%, rgba(227,184,95,.10)); pointer-events: none; }
+.fk-fig .dupe-q { position: absolute; bottom: 6px; right: 6px; background: linear-gradient(180deg, var(--rose), var(--rose-deep)); color: #3a0f23; font-size: 9px; font-weight: 900; border-radius: 8px; padding: 2px 6px; box-shadow: 0 4px 10px rgba(0,0,0,.3); }
 .fk-fig.flash { animation: fk-pop .5s ease; }
-@keyframes fk-pop {
-  0%   { transform: scale(.6); opacity: 0; }
-  60%  { transform: scale(1.08); }
-  100% { transform: scale(1); }
-}
-
-/* ── carta especial "M" ── */
-.fk-fig.m-card {
-  border: 2px solid #f1a8c6;
-  box-shadow:
-    0 0 0 1px #d76a98,
-    0 0 12px 3px rgba(215,106,152,.55),
-    inset 0 0 18px rgba(241,168,198,.08);
-}
+@keyframes fk-pop { 0% { transform: scale(.6); opacity: 0; } 60% { transform: scale(1.08); } 100% { transform: scale(1); } }
+.fk-fig.m-card { border: 2px solid #f1a8c6; box-shadow: 0 0 0 1px #d76a98, 0 0 12px 3px rgba(215,106,152,.55), inset 0 0 18px rgba(241,168,198,.08); }
 .fk-fig.m-card .fname { color: var(--rose); }
-.fk-fig.m-card .m-badge {
-  position: absolute; top: 6px; right: 6px;
-  font-size: 8px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase;
-  background: linear-gradient(135deg, var(--rose), var(--rose-deep));
-  color: #3a0f23; border-radius: 6px; padding: 2px 5px;
-  box-shadow: 0 2px 8px rgba(215,106,152,.5);
-}
-/* carta M vacía: borde rosa punteado — !important para pisar .empty */
-.fk-fig.empty.m-card {
-  border-style: dashed !important;
-  border-color: #f1a8c6 !important;
-  box-shadow: 0 0 0 1px #d76a98, 0 0 12px 3px rgba(215,106,152,.45), inset 0 0 12px rgba(241,168,198,.07) !important;
-}
+.fk-fig.m-card .m-badge { position: absolute; top: 6px; right: 6px; font-size: 8px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; background: linear-gradient(135deg, var(--rose), var(--rose-deep)); color: #3a0f23; border-radius: 6px; padding: 2px 5px; box-shadow: 0 2px 8px rgba(215,106,152,.5); }
+.fk-fig.empty.m-card { border-style: dashed !important; border-color: #f1a8c6 !important; box-shadow: 0 0 0 1px #d76a98, 0 0 12px 3px rgba(215,106,152,.45), inset 0 0 12px rgba(241,168,198,.07) !important; }
 
-/* section header */
 .fk-sh { display: flex; align-items: center; gap: 10px; margin: 26px 0 12px; }
 .fk-sh .ln { flex: 1; height: 1px; background: var(--line); }
 .fk-sh span { font-family: 'Mulish'; font-weight: 700; font-size: 11px; letter-spacing: .26em; text-transform: uppercase; color: var(--gold-2); }
 
 /* gold row */
 .fk-gold-row { display: grid; grid-template-columns: repeat(3,1fr); gap: 11px; }
-.fk-gcard {
-  aspect-ratio: .72; border-radius: 14px; position: relative; overflow: hidden;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  text-align: center; padding: 8px;
-  background: linear-gradient(160deg, #2c2143, #191130); border: 1px solid var(--line);
-  filter: grayscale(.5); opacity: .62;
-}
+.fk-gcard { aspect-ratio: .72; border-radius: 14px; position: relative; overflow: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 8px; background: linear-gradient(160deg, #2c2143, #191130); border: 1px solid var(--line); }
+.fk-gcard.locked { filter: grayscale(.5); opacity: .62; }
+.fk-gcard.won { background: linear-gradient(160deg, #3a2c12, #191130); border-color: var(--gold-1); box-shadow: 0 0 22px rgba(227,184,95,.28); }
 .fk-gcard .glyph  { font-size: 30px; }
 .fk-gcard .fname  { font-family: 'Cormorant Garamond'; font-weight: 700; font-size: 13px; color: var(--gold-1); margin-top: 6px; line-height: 1; }
 .fk-gcard .lk     { position: absolute; top: 7px; right: 8px; font-size: 12px; opacity: .7; }
 
 /* src cards */
 .fk-src-row { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
-.fk-src {
-  flex: 1 1 calc(50% - 5px); min-width: calc(50% - 5px);
-  background: var(--glass); border: 1px solid rgba(255,255,255,.07);
-  border-radius: 16px; padding: 14px 12px; text-align: center; cursor: pointer; transition: .15s;
-}
+.fk-src { flex: 1 1 calc(50% - 5px); min-width: calc(50% - 5px); background: var(--glass); border: 1px solid rgba(255,255,255,.07); border-radius: 16px; padding: 14px 12px; text-align: center; cursor: pointer; transition: .15s; position: relative; }
 .fk-src:active { transform: scale(.98); }
 .fk-src .ic { font-size: 22px; }
 .fk-src .t  { font-weight: 800; font-size: 13px; margin-top: 8px; }
 .fk-src .d  { font-size: 10.5px; color: var(--muted); font-weight: 600; margin-top: 2px; line-height: 1.3; }
+.fk-src.ready { border-color: rgba(246,221,153,.5); background: rgba(227,184,95,.12); }
 .fk-src.spent { opacity: .4; pointer-events: none; }
+.fk-src.spent::after { content: "✓ usado"; position: absolute; top: 9px; right: 10px; font-size: 9px; font-weight: 900; letter-spacing: .06em; color: var(--green); text-transform: uppercase; }
 
 /* sheet overlay */
-.fk-sheet {
-  position: absolute; inset: 0; z-index: 30;
-  background: rgba(8,6,15,.86); backdrop-filter: blur(8px);
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  padding: 26px; text-align: center;
-  overflow-y: auto;
-  opacity: 0; pointer-events: none; transition: opacity .25s;
-}
+.fk-sheet { position: absolute; inset: 0; z-index: 30; background: rgba(8,6,15,.86); backdrop-filter: blur(8px); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 26px; text-align: center; overflow-y: auto; opacity: 0; pointer-events: none; transition: opacity .25s; }
 .fk-sheet.on { opacity: 1; pointer-events: auto; }
 .fk-sheet > * { flex-shrink: 0; }
 
 /* envelope */
-.fk-envelope {
-  width: 170px; height: 120px; border-radius: 16px; margin: 10px auto 22px;
-  position: relative; cursor: pointer;
-  background: linear-gradient(180deg, var(--bg-2), var(--bg-3)); border: 1px solid var(--line);
-  box-shadow: 0 18px 50px rgba(0,0,0,.5); transition: transform .2s;
-}
+.fk-envelope { width: 170px; height: 120px; border-radius: 16px; margin: 10px auto 22px; position: relative; cursor: pointer; background: linear-gradient(180deg, var(--bg-2), var(--bg-3)); border: 1px solid var(--line); box-shadow: 0 18px 50px rgba(0,0,0,.5); transition: transform .2s; }
 .fk-envelope:active { transform: scale(.97); }
-.fk-envelope::before {
-  content: ""; position: absolute; inset: 0; border-radius: 16px;
-  background: linear-gradient(135deg, transparent 40%, rgba(246,221,153,.18) 50%, transparent 60%);
-}
+.fk-envelope::before { content: ""; position: absolute; inset: 0; border-radius: 16px; background: linear-gradient(135deg, transparent 40%, rgba(246,221,153,.18) 50%, transparent 60%); }
 .fk-envelope.busy { opacity: .55; pointer-events: none; }
-.fk-seal {
-  position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
-  width: 52px; height: 52px; border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, var(--gold-1), var(--gold-3));
-  display: flex; align-items: center; justify-content: center;
-  font-size: 24px; box-shadow: 0 6px 18px rgba(0,0,0,.4);
-  animation: fk-beat 1.6s infinite;
-}
-@keyframes fk-beat {
-  0%,100% { transform: translate(-50%,-50%) scale(1); }
-  50%      { transform: translate(-50%,-50%) scale(1.08); }
-}
+.fk-seal { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 52px; height: 52px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, var(--gold-1), var(--gold-3)); display: flex; align-items: center; justify-content: center; font-size: 24px; box-shadow: 0 6px 18px rgba(0,0,0,.4); animation: fk-beat 1.6s infinite; }
+@keyframes fk-beat { 0%,100% { transform: translate(-50%,-50%) scale(1); } 50% { transform: translate(-50%,-50%) scale(1.08); } }
 
 /* reveal cards */
-.fk-reveal { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; max-width: 340px; }
-.fk-rc {
-  width: 84px; border-radius: 12px; padding: 10px 6px; text-align: center;
-  background: linear-gradient(160deg, rgba(40,28,80,.95), rgba(20,13,49,.95));
-  border: 1px solid rgba(255,255,255,.08);
-  opacity: 0; transform: translateY(14px) scale(.9);
-  animation: fk-rin .42s forwards;
-}
 .fk-rc .g  { font-size: 30px; }
 .fk-rc .nm { font-family: 'Cormorant Garamond'; font-weight: 600; font-size: 12px; color: #fff; margin-top: 5px; line-height: 1; }
-.fk-rc .tag { font-size: 8px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; margin-top: 5px; }
-.fk-rc.new .tag  { color: #7ee0a8; }
-.fk-rc.rep .tag  { color: var(--rose); }
-.fk-rc.rara  { box-shadow: 0 0 0 1px rgba(241,168,198,.5), 0 8px 22px rgba(215,106,152,.25); }
-.fk-rc.epica { box-shadow: 0 0 0 1px var(--gold-1), 0 8px 26px rgba(227,184,95,.4); }
-/* carta M en reveal */
-.fk-rc.m { box-shadow: 0 0 0 2px #d76a98, 0 8px 22px rgba(215,106,152,.45); border-color: rgba(241,168,198,.6); }
-@keyframes fk-rin { to { opacity: 1; transform: translateY(0) scale(1); } }
 
 /* modal card */
-.fk-modal-card {
-  width: 100%; max-width: 330px;
-  background: linear-gradient(180deg, var(--bg-2), var(--bg-3));
-  border: 1px solid var(--line); border-radius: 22px; padding: 24px 20px;
-  box-shadow: 0 30px 80px rgba(0,0,0,.6);
-  text-align: center;
-}
+.fk-modal-card { width: 100%; max-width: 330px; background: linear-gradient(180deg, var(--bg-2), var(--bg-3)); border: 1px solid var(--line); border-radius: 22px; padding: 24px 20px; box-shadow: 0 30px 80px rgba(0,0,0,.6); text-align: center; }
 .fk-swap { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 18px 0; }
-.fk-swap .mini {
-  flex: 1; border-radius: 14px; padding: 12px 8px; text-align: center;
-  background: rgba(12,9,32,.5); border: 1px solid rgba(255,255,255,.07);
-}
+.fk-swap .mini { flex: 1; border-radius: 14px; padding: 12px 8px; text-align: center; background: rgba(12,9,32,.5); border: 1px solid rgba(255,255,255,.07); }
 .fk-swap .mini .g  { font-size: 30px; }
 .fk-swap .mini .nm { font-family: 'Cormorant Garamond'; font-weight: 600; font-size: 12px; margin-top: 5px; color: #fff; line-height: 1; }
 .fk-swap .mini .who { font-size: 9px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .08em; margin-top: 6px; }
@@ -463,39 +452,23 @@ body {
 .fk-codebox { display: flex; gap: 10px; align-items: center; justify-content: center; margin: 8px 0 4px; }
 .fk-codebox b { font-family: 'Cormorant Garamond'; font-weight: 700; font-size: 40px; letter-spacing: .18em; color: var(--gold-1); }
 
-/* done screen */
-.fk-rays {
-  position: absolute; width: 600px; height: 600px; left: 50%; top: 34%;
-  transform: translate(-50%,-50%); z-index: 0; border-radius: 50%;
-  background: conic-gradient(from 0deg,
-    rgba(246,221,153,0), rgba(246,221,153,.14), rgba(246,221,153,0) 12%,
-    rgba(246,221,153,0), rgba(246,221,153,.14), rgba(246,221,153,0) 36%,
-    rgba(246,221,153,0), rgba(246,221,153,.14), rgba(246,221,153,0) 62%,
-    rgba(246,221,153,0), rgba(246,221,153,.14), rgba(246,221,153,0) 88%);
-  animation: fk-spin 22s linear infinite;
-}
+/* opts (pick request) */
+.fk-opts { display: grid; grid-template-columns: 1fr; gap: 9px; margin-top: 14px; max-height: 46vh; overflow-y: auto; }
+.fk-opt { background: rgba(12,9,32,.55); border: 1px solid rgba(255,255,255,.08); border-radius: 14px; padding: 13px; font-weight: 700; font-size: 14px; display: flex; align-items: center; gap: 11px; cursor: pointer; color: var(--ink); text-align: left; }
+.fk-opt .k { width: 30px; height: 30px; border-radius: 9px; background: rgba(246,221,153,.14); display: flex; align-items: center; justify-content: center; font-size: 18px; flex: 0 0 auto; }
+.fk-opt small { margin-left: auto; font-size: 9px; color: var(--muted-2); font-weight: 800; text-transform: uppercase; }
+
+/* done / rays / ticket */
+.fk-rays { position: absolute; width: 600px; height: 600px; left: 50%; top: 34%; transform: translate(-50%,-50%); z-index: 0; border-radius: 50%; background: conic-gradient(from 0deg, rgba(246,221,153,0), rgba(246,221,153,.14), rgba(246,221,153,0) 12%, rgba(246,221,153,0), rgba(246,221,153,.14), rgba(246,221,153,0) 36%, rgba(246,221,153,0), rgba(246,221,153,.14), rgba(246,221,153,0) 62%, rgba(246,221,153,0), rgba(246,221,153,.14), rgba(246,221,153,0) 88%); animation: fk-spin 22s linear infinite; }
 @keyframes fk-spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
-.fk-goldcard {
-  width: 210px; border-radius: 20px; padding: 22px 16px 18px; position: relative; z-index: 2; text-align: center;
-  background: linear-gradient(165deg, #3a2c12, #171026);
-  border: 1px solid var(--gold-1);
-  box-shadow: 0 24px 70px rgba(227,184,95,.35), 0 0 0 4px rgba(246,221,153,.08);
-  animation: fk-pop .6s ease;
-}
-.fk-goldcard .crown  { font-size: 42px; }
-.fk-goldcard .nm     { font-family: 'Cormorant Garamond'; font-weight: 700; font-size: 24px; color: var(--gold-1); margin-top: 6px; line-height: 1; }
-.fk-goldcard .sub    { font-size: 10px; letter-spacing: .2em; text-transform: uppercase; color: var(--muted); font-weight: 700; margin-top: 8px; }
-.fk-goldcard .serial { margin-top: 14px; font-size: 11px; color: var(--gold-2); font-weight: 800; letter-spacing: .1em; }
+.fk-ticket { width: 225px; border-radius: 20px; padding: 22px 16px 18px; position: relative; z-index: 2; text-align: center; background: linear-gradient(165deg, #3a2c12, #171026); border: 1px solid var(--gold-1); box-shadow: 0 24px 70px rgba(227,184,95,.35), 0 0 0 4px rgba(246,221,153,.08); animation: fk-pop .6s ease; margin: 14px auto 0; }
+.fk-ticket .crown  { font-size: 42px; }
+.fk-ticket .nm     { font-family: 'Cormorant Garamond'; font-weight: 700; font-size: 24px; color: var(--gold-1); margin-top: 6px; line-height: 1; }
+.fk-ticket .sub    { font-size: 10px; letter-spacing: .2em; text-transform: uppercase; color: var(--muted); font-weight: 700; margin-top: 8px; }
+.fk-ticket .ser    { margin-top: 14px; font-size: 11px; color: var(--gold-2); font-weight: 800; letter-spacing: .1em; }
 
 /* toast */
-.fk-toast {
-  position: absolute; left: 50%; bottom: 26px;
-  transform: translateX(-50%) translateY(20px);
-  z-index: 40; background: rgba(12,9,32,.92); border: 1px solid var(--line);
-  color: var(--ink); font-weight: 700; font-size: 13px;
-  padding: 12px 18px; border-radius: 14px; opacity: 0;
-  transition: .3s; pointer-events: none; max-width: 88%; text-align: center;
-}
+.fk-toast { position: absolute; left: 50%; bottom: 92px; transform: translateX(-50%) translateY(20px); z-index: 40; background: rgba(12,9,32,.92); border: 1px solid var(--line); color: var(--ink); font-weight: 700; font-size: 13px; padding: 12px 18px; border-radius: 14px; opacity: 0; transition: .3s; pointer-events: none; max-width: 88%; text-align: center; }
 .fk-toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
 
 /* utils */
@@ -506,10 +479,136 @@ body {
 .mt8  { margin-top: 8px; }
 .mt14 { margin-top: 14px; }
 .mt20 { margin-top: 20px; }
+
+/* ── bottom nav ── */
+.fk-nav { position: absolute; left: 0; right: 0; bottom: 0; z-index: 8; display: flex; gap: 6px; padding: 10px 14px calc(12px + env(safe-area-inset-bottom)); background: linear-gradient(180deg, transparent, rgba(8,6,15,.9) 34%); backdrop-filter: blur(10px); max-width: 560px; margin: 0 auto; }
+.fk-nav button { flex: 1; appearance: none; border: 0; background: transparent; cursor: pointer; color: var(--muted-2); font-family: 'Mulish'; font-weight: 800; font-size: 9.5px; letter-spacing: .03em; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 2px; border-radius: 14px; position: relative; transition: color .2s, background .2s; }
+.fk-nav button .ic { font-size: 21px; line-height: 1; filter: grayscale(.5); transition: filter .2s, transform .2s; }
+.fk-nav button.act { color: var(--gold-1); background: rgba(227,184,95,.1); }
+.fk-nav button.act .ic { filter: none; transform: translateY(-1px); }
+.fk-nav button.gold { color: var(--gold-2); }
+.fk-nav button.gold.act { color: var(--gold-1); background: rgba(227,184,95,.16); }
+.fk-nav .dot { position: absolute; top: 4px; right: calc(50% - 20px); min-width: 17px; height: 17px; border-radius: 9px; padding: 0 4px; background: linear-gradient(180deg, var(--rose), var(--rose-deep)); color: #3a0f23; font-size: 10px; font-weight: 900; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(0,0,0,.35); }
+
+/* ── cards / sections ── */
+.fk-card { background: var(--glass); border: 1px solid rgba(255,255,255,.07); border-radius: 18px; padding: 16px; }
+.fk-wall { border: 1px solid rgba(241,168,198,.3); border-radius: 18px; padding: 18px 16px; background: linear-gradient(165deg, rgba(215,106,152,.12), rgba(34,24,66,.4)); text-align: center; }
+
+/* ── req rows (trade / prizes) ── */
+.fk-req { display: flex; align-items: center; gap: 11px; padding: 12px 13px; border-radius: 14px; margin-top: 9px; background: rgba(12,9,32,.5); border: 1px solid rgba(255,255,255,.06); }
+.fk-req .fg { width: 42px; height: 42px; border-radius: 12px; background: rgba(241,168,198,.12); border: 1px solid rgba(241,168,198,.25); display: flex; align-items: center; justify-content: center; font-size: 21px; flex: 0 0 auto; }
+.fk-req .tx { flex: 1; min-width: 0; }
+.fk-req .tx .a { font-size: 13.5px; font-weight: 700; line-height: 1.25; }
+.fk-req .tx .a b { color: var(--gold-1); }
+.fk-req .tx .b { font-size: 10.5px; color: var(--muted-2); font-weight: 700; margin-top: 2px; }
+.fk-req.mine { border-color: rgba(241,168,198,.35); background: linear-gradient(90deg, rgba(241,168,198,.12), rgba(34,24,66,.3)); }
+.fk-req.given { opacity: .4; filter: grayscale(.8); }
+.fk-req .chk { color: var(--green); font-weight: 900; font-size: 16px; flex: 0 0 auto; }
+.fk-codebig { font-family: 'Cormorant Garamond'; font-weight: 700; font-size: 42px; letter-spacing: .2em; color: var(--gold-1); text-align: center; }
+
+/* ── feed ── */
+.fk-feed .ev { display: flex; align-items: flex-start; gap: 10px; padding: 11px 13px; margin-bottom: 9px; border-radius: 13px; background: rgba(34,24,66,.45); border: 1px solid rgba(255,255,255,.05); font-size: 13.5px; font-weight: 600; line-height: 1.35; animation: fk-slin .5s cubic-bezier(.2,.8,.2,1); }
+.fk-feed .ev.mine { border-color: rgba(246,221,153,.28); background: rgba(227,184,95,.08); }
+.fk-feed .ev .ic { font-size: 16px; flex: 0 0 auto; line-height: 1.3; }
+.fk-feed .ev b { color: #fff; font-weight: 800; }
+.fk-feed .ev .g { color: var(--gold-1); font-weight: 800; }
+.fk-feed .ev .r { color: var(--rose); font-weight: 800; }
+.fk-feed .ev .t { display: block; font-size: 9.5px; color: var(--muted-2); font-weight: 800; letter-spacing: .08em; margin-top: 4px; text-transform: uppercase; }
+@keyframes fk-slin { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ── top 8 ── */
+.fk-lb { display: flex; align-items: center; gap: 10px; padding: 11px 12px 9px; border-radius: 12px; margin-top: 8px; background: rgba(12,9,32,.5); border: 1px solid rgba(255,255,255,.06); flex-wrap: wrap; }
+.fk-lb .rk { width: 23px; height: 23px; border-radius: 7px; background: rgba(246,221,153,.13); color: var(--gold-1); flex: 0 0 auto; font-family: 'Cormorant Garamond'; font-weight: 700; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+.fk-lb .lnm { font-weight: 800; font-size: 13px; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fk-lb .ct { font-size: 12px; font-weight: 800; color: var(--muted); }
+.fk-lb .bar { flex-basis: 100%; height: 4px; border-radius: 2px; background: rgba(255,255,255,.08); overflow: hidden; }
+.fk-lb .bar i { display: block; height: 100%; border-radius: 2px; transition: width .6s ease; background: linear-gradient(90deg, var(--rose), var(--gold-1)); }
+.fk-lb.me { border-color: rgba(246,221,153,.42); background: rgba(227,184,95,.09); }
+.fk-lb.done { border-color: rgba(140,230,176,.55); background: rgba(140,230,176,.09); }
+.fk-lb.done .rk { background: rgba(140,230,176,.16); color: var(--green); }
+.fk-lb.done .won { font-size: 11px; font-weight: 900; color: var(--green); text-align: right; }
+.fk-lb.done .bar i { background: var(--green); }
+
+/* ── gift bar ── */
+.fk-giftbar { position: absolute; left: 50%; bottom: 140px; transform: translateX(-50%); z-index: 20; background: linear-gradient(180deg, var(--gold-1), var(--gold-2)); color: #2a1c08; font-weight: 800; font-size: 12.5px; padding: 11px 18px; border-radius: 99px; box-shadow: 0 10px 30px rgba(227,184,95,.45), inset 0 1px 0 rgba(255,255,255,.55); cursor: pointer; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.fk-giftbar.ready { animation: fk-giftbeat 1.2s infinite; }
+@keyframes fk-giftbeat { 0%,100% { transform: translateX(-50%) scale(1); } 50% { transform: translateX(-50%) scale(1.07); } }
+
+/* ── reveal de a una: carta grande con flip (estilo martireino) ── */
+.fk-stage { display: flex; flex-direction: column; align-items: center; gap: 14px; width: 100%; }
+.fk-stage .count { font-size: 11px; font-weight: 800; letter-spacing: .22em; text-transform: uppercase; color: var(--muted); }
+.fk-stage .dots { display: flex; gap: 6px; }
+.fk-stage .dots i { width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,.16); transition: background .3s, transform .3s; }
+.fk-stage .dots i.done { background: var(--gold-2); }
+.fk-stage .dots i.cur { background: var(--gold-1); transform: scale(1.35); }
+.fk-stage .next { min-height: 48px; display: flex; align-items: center; }
+.fk-stage .nexthint { font-size: 12px; color: var(--muted-2); font-weight: 700; animation: fk-beat2 1.6s infinite; }
+@keyframes fk-beat2 { 0%,100% { opacity: .5; } 50% { opacity: 1; } }
+
+.fk-bigcard { width: min(62vw, 240px); aspect-ratio: .7; perspective: 900px; cursor: pointer; animation: fk-cardenter .45s cubic-bezier(.2,.9,.3,1.2); }
+@keyframes fk-cardenter { from { opacity: 0; transform: translateY(36px) scale(.85); } to { opacity: 1; transform: translateY(0) scale(1); } }
+.fk-bigcard .in { position: relative; width: 100%; height: 100%; transform-style: preserve-3d; transition: transform .65s cubic-bezier(.3,.9,.3,1); will-change: transform; }
+.fk-bigcard.go .in { transform: rotateY(180deg); }
+.fk-bcface { position: absolute; inset: 0; border-radius: 18px; backface-visibility: hidden; -webkit-backface-visibility: hidden; overflow: hidden; }
+.fk-bcface.fr { display: flex; align-items: center; justify-content: center; background: repeating-linear-gradient(45deg, rgba(213,13,162,.10) 0 9px, transparent 9px 18px), linear-gradient(165deg, #241a4d, #140d31); border: 1px solid rgba(255,255,255,.12); }
+.fk-bcface.fr .mono { font-family: 'Cormorant Garamond'; font-weight: 700; font-size: 60px; background: linear-gradient(115deg, #f1a8c6, #f6dd99); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; filter: drop-shadow(0 0 18px rgba(241,168,198,.5)); }
+.fk-bcface.bk { transform: rotateY(180deg); padding: 7px; background: linear-gradient(160deg,#f3ead6,#d4bd8a 30%,#faf4e6 52%,#c4a96f 75%,#efe5cd); }
+.fk-bigcard.r-rara .fk-bcface.bk { background: linear-gradient(160deg,#e3f0e8,#b9c8d6 28%,#efe8f6 50%,#a9bfb4 72%,#dcd2ea); }
+.fk-bigcard.r-m .fk-bcface.bk { background: linear-gradient(160deg,#f7d9e9,#d76a98 30%,#fbe6f0 52%,#c45b86 75%,#f3c9de); }
+.fk-bigcard.r-epica .fk-bcface.bk { background: linear-gradient(160deg,#7a52b0,#caa64a 22%,#46286f 45%,#e3c878 62%,#33205c 85%,#8a5fc4); }
+.fk-bc-in { position: relative; width: 100%; height: 100%; border-radius: 13px; overflow: hidden; display: flex; flex-direction: column; background: linear-gradient(170deg,#f6f1e4,#e9dfc8); }
+.fk-bigcard.r-rara .fk-bc-in { background: linear-gradient(170deg,#f2f6f0,#e0e8e4); }
+.fk-bigcard.r-m .fk-bc-in { background: linear-gradient(170deg,#fbeef4,#f0dce6); }
+.fk-bigcard.r-epica .fk-bc-in { background: linear-gradient(170deg,#f1ecf6,#dcd1e8); }
+.fk-bc-art { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; background: radial-gradient(circle at 50% 40%, rgba(227,184,95,.28), transparent 70%); }
+.fk-bigcard.r-rara .fk-bc-art { background: radial-gradient(circle at 50% 40%, rgba(150,200,175,.32), transparent 70%); }
+.fk-bigcard.r-m .fk-bc-art { background: radial-gradient(circle at 50% 40%, rgba(215,106,152,.35), transparent 70%); }
+.fk-bigcard.r-epica .fk-bc-art { background: radial-gradient(circle at 50% 40%, rgba(150,100,200,.3), transparent 70%); }
+.fk-bc-art .glyph { font-size: 84px; filter: drop-shadow(0 8px 18px rgba(60,40,20,.35)); }
+.fk-bc-art .film { position: absolute; bottom: 10px; font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: #6a5a3a; }
+.fk-bc-no { position: absolute; top: 9px; left: 9px; width: 34px; height: 34px; border-radius: 50%; z-index: 2; background: #f3eee2; border: 2px solid rgba(29,42,74,.35); color: #1d2a4a; font-family: 'Cormorant Garamond'; font-weight: 700; font-size: 19px; display: flex; align-items: center; justify-content: center; box-shadow: 0 3px 9px rgba(0,0,0,.35); }
+.fk-bc-rar { position: absolute; top: 9px; right: 9px; min-width: 46px; height: 46px; border-radius: 50%; z-index: 2; padding: 0 5px; background: #f3eee2; border: 2px solid rgba(29,42,74,.3); box-shadow: 0 3px 9px rgba(0,0,0,.3); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; }
+.fk-bc-rar b { font-size: 6.5px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; color: #1d2a4a; line-height: 1; }
+.fk-bc-rar span { font-size: 8.5px; letter-spacing: 1.5px; color: #41597a; line-height: 1; }
+.fk-bigcard.r-epica .fk-bc-rar { background: #3a2566; border-color: rgba(227,184,95,.6); }
+.fk-bigcard.r-epica .fk-bc-rar b { color: var(--gold-1); }
+.fk-bigcard.r-epica .fk-bc-rar span { color: var(--gold-2); }
+.fk-bc-plate { margin: 0 9px 10px; background: linear-gradient(180deg,#faf7ee,#e8e2d2); border-radius: 11px; padding: 9px 8px 8px; text-align: center; box-shadow: inset 0 1px 0 #fff, 0 3px 10px rgba(0,0,0,.3); position: relative; z-index: 2; }
+.fk-bc-plate .nm { font-family: 'Cormorant Garamond'; font-weight: 700; font-size: 19px; line-height: 1; color: #1d2a4a; letter-spacing: .02em; text-transform: uppercase; }
+.fk-bc-plate .fm { font-size: 9px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: #41597a; margin-top: 4px; }
+.fk-bigcard .tagwrap { position: absolute; left: 50%; top: -13px; transform: translateX(-50%) scale(0); z-index: 3; transition: transform .3s cubic-bezier(.3,1.4,.5,1); }
+.fk-bigcard.go .tagwrap { transform: translateX(-50%) scale(1); transition-delay: .5s; }
+.fk-tag { display: inline-block; padding: 5px 13px; border-radius: 99px; font-size: 11px; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; box-shadow: 0 6px 16px rgba(0,0,0,.4); }
+.fk-tag.new { background: linear-gradient(180deg,#a9f5c9,#5ecf91); color: #0c3a22; }
+.fk-tag.rep { background: linear-gradient(180deg, var(--rose), var(--rose-deep)); color: #3a0f23; }
+.fk-bcface.bk::after { content: ""; position: absolute; inset: -40%; z-index: 4; pointer-events: none; opacity: 0; background: linear-gradient(115deg, transparent 42%, rgba(255,255,255,.5) 50%, transparent 58%); transform: translateX(-70%); }
+.fk-bigcard.go .fk-bcface.bk::after { animation: fk-shine 1s ease .55s 1; }
+@keyframes fk-shine { 0% { opacity: 1; transform: translateX(-70%); } 100% { opacity: 0; transform: translateX(70%); } }
+.fk-bigcard.r-epica.go { animation: fk-halo 1.4s ease .6s 1; }
+@keyframes fk-halo { 0%,100% { filter: drop-shadow(0 0 0 rgba(246,221,153,0)); } 40% { filter: drop-shadow(0 0 34px rgba(246,221,153,.75)); } }
+
+/* resumen del sobre: mini flips */
+.fk-reveal { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; max-width: 344px; }
+.fk-flip { width: 84px; aspect-ratio: .72; perspective: 600px; opacity: 0; transform: translateY(14px); animation: fk-rin .4s forwards; }
+@keyframes fk-rin { to { opacity: 1; transform: translateY(0); } }
+.fk-flip .inner { position: relative; width: 100%; height: 100%; transform-style: preserve-3d; transition: transform .55s cubic-bezier(.3,.9,.3,1); }
+.fk-flip.go .inner { transform: rotateY(180deg); }
+.fk-face { position: absolute; inset: 0; border-radius: 12px; backface-visibility: hidden; -webkit-backface-visibility: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 8px 5px; border: 1px solid rgba(255,255,255,.09); }
+.fk-face.fr { background: repeating-linear-gradient(45deg, rgba(246,221,153,.07) 0 7px, transparent 7px 14px), linear-gradient(165deg,#241a4d,#140d31); }
+.fk-face.fr .mono { font-family: 'Cormorant Garamond'; font-weight: 700; font-size: 26px; color: var(--gold-2); }
+.fk-face.bk { transform: rotateY(180deg); background: linear-gradient(165deg, rgba(43,30,86,.97), rgba(18,11,44,.97)); }
+.fk-face.bk .g { font-size: 29px; }
+.fk-face.bk .nm { font-family: 'Cormorant Garamond'; font-weight: 600; font-size: 11.5px; color: #fff; margin-top: 5px; line-height: 1.05; }
+.fk-face.bk .tag { font-size: 7.5px; font-weight: 900; letter-spacing: .07em; text-transform: uppercase; margin-top: 5px; }
+.fk-flip.new .fk-face.bk .tag { color: var(--green); }
+.fk-flip.rep .fk-face.bk .tag { color: var(--rose); }
+.fk-flip.rara .fk-face.bk { box-shadow: inset 0 0 0 1px rgba(241,168,198,.55); }
+.fk-flip.epica .fk-face.bk { box-shadow: inset 0 0 0 1px var(--gold-1); }
+.fk-flip.m .fk-face.bk { box-shadow: inset 0 0 0 1px var(--rose-deep); }
 `;
 
 // ─────────────────────────────────────────────
-// STARFIELD
+// STARFIELD / CASTLE
 // ─────────────────────────────────────────────
 
 function Starfield() {
@@ -522,29 +621,18 @@ function Starfield() {
       delay: `${Math.random() * 4}s`,
     })),
   );
-
   return (
     <div className="fk-stars">
       {stars.current.map((s) => (
         <i
           key={s.key}
           className="fk-star"
-          style={{
-            left: s.left,
-            top: s.top,
-            width: s.size,
-            height: s.size,
-            animationDelay: s.delay,
-          }}
+          style={{ left: s.left, top: s.top, width: s.size, height: s.size, animationDelay: s.delay }}
         />
       ))}
     </div>
   );
 }
-
-// ─────────────────────────────────────────────
-// CASTLE
-// ─────────────────────────────────────────────
 
 function Castle() {
   return (
@@ -584,23 +672,26 @@ function Castle() {
 // TOPBAR
 // ─────────────────────────────────────────────
 
-interface TopbarProps {
+function Topbar({
+  name,
+  avatar,
+  selfie,
+  uniques,
+}: {
   name: string;
   avatar: Avatar | null;
+  selfie: string | null;
   uniques: number;
-}
-
-function Topbar({ name, avatar, uniques }: TopbarProps) {
-  const fallback = "Invitado/a";
+}) {
   return (
     <div className="fk-topbar-bg">
       <div className="fk-topbar">
-        <div className="fk-me">{avatar ? avatar.g : "👑"}</div>
+        <div className="fk-me">
+          <Face avatar={avatar} selfie={selfie} />
+        </div>
         <div className="fk-me-info">
-          <div className="n">{name || fallback}</div>
-          <div className="s">
-            {avatar ? `${avatar.n} · ` : ""}Reino de Marti
-          </div>
+          <div className="n">{name || "Invitado/a"}</div>
+          <div className="s">{!selfie && avatar ? `${avatar.n} · ` : ""}Reino de Marti</div>
         </div>
         <div className="fk-prog">
           <div className="big">
@@ -611,18 +702,11 @@ function Topbar({ name, avatar, uniques }: TopbarProps) {
         </div>
       </div>
       <div className="fk-bar">
-        <i
-          className="fk-bar-fill"
-          style={{ width: `${(uniques / 15) * 100}%` }}
-        />
+        <i className="fk-bar-fill" style={{ width: `${(uniques / 15) * 100}%` }} />
       </div>
     </div>
   );
 }
-
-// ─────────────────────────────────────────────
-// SECTION HEADER
-// ─────────────────────────────────────────────
 
 function SectionHeader({ label }: { label: string }) {
   return (
@@ -641,10 +725,6 @@ function SectionHeader({ label }: { label: string }) {
 function FigCard({ f, qty }: { f: Fig; qty: number }) {
   const num = String(f.id).padStart(2, "0");
   const isM = f.r === "m";
-
-  // FIX: los template literals concatenaban clases sin espacio
-  // ("emptym-card", "haveflash"), por eso los estilos especiales
-  // nunca aplicaban.
   if (qty === 0) {
     return (
       <div className={`fk-fig empty${isM ? " m-card" : ""}`}>
@@ -656,11 +736,8 @@ function FigCard({ f, qty }: { f: Fig; qty: number }) {
       </div>
     );
   }
-
   return (
-    <div
-      className={`fk-fig have${qty > 1 ? " flash" : ""}${isM ? " m-card" : ""}`}
-    >
+    <div className={`fk-fig have${qty > 1 ? " flash" : ""}${isM ? " m-card" : ""}`}>
       <span className="num">{num}</span>
       {isM && <span className="m-badge">✦ M</span>}
       <span className="glyph">{f.g}</span>
@@ -672,53 +749,50 @@ function FigCard({ f, qty }: { f: Fig; qty: number }) {
 }
 
 // ─────────────────────────────────────────────
-// INTRO SCREEN
+// INTRO SCREEN (acceso por pulsera — se mantiene)
 // ─────────────────────────────────────────────
 
 interface IntroScreenProps {
   name: string;
   avatar: Avatar | null;
+  selfie: string | null;
   onAvatarSelect: (a: Avatar) => void;
-  onEnter: (nombre: string, avatar: Avatar) => void;
+  onSelfie: (dataUrl: string | null) => void;
+  onEnter: (nombre: string, avatar: Avatar | null, selfie: string | null) => void;
   onToast: (msg: string) => void;
 }
 
 function IntroScreen({
   name,
   avatar,
+  selfie,
   onAvatarSelect,
+  onSelfie,
   onEnter,
   onToast,
 }: IntroScreenProps) {
   const [localName, setLocalName] = useState(name);
+  const fileRef = useRef<HTMLInputElement>(null);
   const hasName = localName.trim().length > 0;
 
-  // Si el perfil llega después del primer render (loadAlbum es
-  // async), precargar el nombre guardado.
   useEffect(() => {
     if (name) setLocalName((prev) => prev || name);
   }, [name]);
 
-  // FIX: se eliminó el useEffect que llamaba onEnter() automáticamente
-  // cuando name/avatar cambiaban — disparaba la entrada dos veces y
-  // guardaba el perfil con el nombre desactualizado. Ahora el salto de
-  // intro para invitados con perfil completo lo decide el componente
-  // raíz al cargar el álbum.
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    const url = await selfieFromFile(f);
+    if (url) onSelfie(url);
+    else onToast("No se pudo usar esa foto 😕");
+  };
 
   const handleEnter = () => {
     const trimmed = localName.trim();
-    if (!trimmed) {
-      onToast("Poné tu nombre 🙂");
-      return;
-    }
-    if (!avatar) {
-      onToast("Elegí un personaje ✨");
-      return;
-    }
-    // FIX: el nombre y el avatar se pasan explícitamente, en vez de
-    // leer state.name (que todavía no estaba actualizado y hacía que
-    // saveGuestProfile guardara un nombre vacío).
-    onEnter(trimmed, avatar);
+    if (!trimmed) return onToast("Poné tu nombre 🙂");
+    if (!avatar && !selfie) return onToast("Elegí un personaje o sacate una selfie ✨");
+    onEnter(trimmed, selfie ? null : avatar, selfie);
   };
 
   return (
@@ -736,9 +810,8 @@ function IntroScreen({
           )}
         </h1>
         <p className="fk-lead mt14">
-          Juntá las <b style={{ color: "var(--ink)" }}>15 figuritas</b> de Marti
-          convertida en princesa. Con tu sobre no alcanza: para completar el
-          álbum vas a tener que{" "}
+          Juntá las <b style={{ color: "var(--ink)" }}>15 figuritas</b> de Marti convertida en
+          princesa. Con tus sobres no alcanza: para completar el álbum vas a tener que{" "}
           <b style={{ color: "var(--rose)" }}>cambiar con la gente</b>.
         </p>
       </div>
@@ -754,13 +827,30 @@ function IntroScreen({
         />
       </div>
 
-      <div className="mt20 fk-center">
-        <label className="fk-hint">Elegí tu personaje</label>
-        <div className="fk-avatars">
+      <div className="mt20">
+        <label className="fk-hint fk-center" style={{ display: "block" }}>
+          Tu cara en el Reino
+        </label>
+        <div
+          className={`fk-selfiebox${selfie ? " sel" : ""}`}
+          onClick={() => fileRef.current?.click()}
+        >
+          <div className="ph">
+            {selfie ? <img src={selfie} alt="" /> : "🤳"}
+          </div>
+          <div className="tx">
+            <div className="t">{selfie ? "¡Esa cara! Tocá para cambiarla" : "Sacate una selfie"}</div>
+            <div className="d">Aparece en tu perfil y en tu carta dorada</div>
+          </div>
+        </div>
+        <input ref={fileRef} type="file" accept="image/*" capture="user" hidden onChange={(e) => void handleFile(e)} />
+
+        <p className={`fk-hint fk-center mt14 fk-avhint${selfie ? " dim" : ""}`}>— o elegí un personaje —</p>
+        <div className={`fk-avatars${selfie ? " dim" : ""}`}>
           {AVATARS.map((a) => (
             <div
               key={a.n}
-              className={`fk-av${avatar?.n === a.n ? " sel" : ""}`}
+              className={`fk-av${!selfie && avatar?.n === a.n ? " sel" : ""}`}
               onClick={() => onAvatarSelect(a)}
             >
               {a.g}
@@ -773,9 +863,7 @@ function IntroScreen({
       <button className="fk-btn mt20" onClick={handleEnter}>
         Entrar al Reino
       </button>
-      <p className="fk-footnote">
-        Tu pulsera guarda tu álbum · no hace falta instalar nada
-      </p>
+      <p className="fk-footnote">Tu pulsera guarda tu álbum · no hace falta instalar nada</p>
     </div>
   );
 }
@@ -786,80 +874,512 @@ function IntroScreen({
 
 interface AlbumScreenProps {
   counts: Record<number, number>;
-  sources: string[];
-  onOpenSource: (srcKey: string) => void;
+  golds: ReinoGold[];
+  done: boolean;
+  readyTokens: string[];
+  cartasFound: number;
+  igUsed: boolean;
+  triviaUsed: boolean;
+  onOpenToken: (token: string) => void;
+  onSource: (key: string) => void;
   onOpenTrade: () => void;
 }
 
 function AlbumScreen({
   counts,
-  sources,
-  onOpenSource,
+  golds,
+  done,
+  readyTokens,
+  cartasFound,
+  igUsed,
+  triviaUsed,
+  onOpenToken,
+  onSource,
   onOpenTrade,
 }: AlbumScreenProps) {
   const owned = (id: number) => (counts[id] || 0) > 0;
-  const needList = FIGS.filter((f) => !owned(f.id));
+  const uniques = FIGS.filter((f) => owned(f.id)).length;
+  const needCount = 15 - uniques;
+
+  const tiles: { key: string; ready?: string; spent?: boolean }[] = [
+    { key: "codigo" },
+    { key: "trivia", spent: triviaUsed },
+    { key: "carta", spent: cartasFound >= CARTAS_MAX },
+    { key: "ig", spent: igUsed },
+  ];
 
   return (
-    <div className="fk-pad">
+    <div className="fk-pad app">
       <div className="fk-grid">
         {FIGS.map((f) => (
           <FigCard key={f.id} f={f} qty={counts[f.id] || 0} />
         ))}
       </div>
 
-      {sources.length > 0 ? (
+      {readyTokens.length > 0 && (
         <>
-          <SectionHeader label="Conseguir sobres" />
-          <p className="fk-hint fk-center">
-            Los sobres son contados: solo caen en momentos puntuales de la
-            noche.
-          </p>
-          <div className="fk-src-row">
-            {sources.map((k) => (
-              <div key={k} className="fk-src" onClick={() => onOpenSource(k)}>
-                <div className="ic">{SRC_META[k]?.ic}</div>
-                <div className="t">{SRC_META[k]?.t}</div>
-                <div className="d">{SRC_META[k]?.d}</div>
-              </div>
-            ))}
+          <SectionHeader label="Sobres sin abrir" />
+          <div className="fk-wall">
+            <span className="fk-pill">
+              🎁 Tenés {readyTokens.length} sobre{readyTokens.length > 1 ? "s" : ""} listo
+              {readyTokens.length > 1 ? "s" : ""}
+            </span>
+            <button className="fk-btn mt14" onClick={() => onOpenToken(readyTokens[0]!)}>
+              Abrir sobre
+            </button>
+          </div>
+        </>
+      )}
+
+      {done ? (
+        <>
+          <SectionHeader label="👑 Reino completo" />
+          <div className="fk-wall">
+            <span className="fk-pill">✦ Completaste el álbum</span>
+            <p className="fk-hint mt14">
+              Tu carta dorada de Marti te espera en el Mercadito del Reino. Tus repetidas ahora
+              valen oro: regalalas y salvá el álbum de alguien.
+            </p>
           </div>
         </>
       ) : (
-        needList.length > 0 && (
-          <>
-            <SectionHeader label={`Te faltan ${needList.length}`} />
-            <div
-              className="fk-modal-card"
-              style={{ maxWidth: "none", boxShadow: "none" }}
-            >
-              <span className="fk-pill">🔒 Estas no salen más en sobres</span>
+        <>
+          <SectionHeader label="Conseguir sobres" />
+          <p className="fk-hint fk-center">
+            Canjeá <b style={{ color: "var(--ink)" }}>códigos de las entrevistas</b>, ganá la trivia
+            o encontrá los <b style={{ color: "var(--ink)" }}>sobres escondidos</b> por el salón.
+          </p>
+          <div className="fk-src-row">
+            {tiles.map((tile) => {
+              const m = SRC_META[tile.key]!;
+              return (
+                <div
+                  key={tile.key}
+                  className={`fk-src${tile.spent ? " spent" : ""}`}
+                  onClick={() => !tile.spent && onSource(tile.key)}
+                >
+                  <div className="ic">{m.ic}</div>
+                  <div className="t">{m.t}</div>
+                  <div className="d">
+                    {tile.key === "carta" && cartasFound > 0 && cartasFound < CARTAS_MAX
+                      ? `${cartasFound}/${CARTAS_MAX} encontrados`
+                      : m.d}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {needCount > 0 && needCount <= 5 && (
+            <div className="fk-wall mt20">
+              <span className="fk-pill">🔒 Te faltan {needCount}</span>
               <p className="fk-hint mt14">
-                Ya abriste todos tus sobres. Las que te faltan son las más
-                raras — la única forma de cerrar el álbum es{" "}
-                <b style={{ color: "var(--rose)" }}>cambiando con alguien</b>.
+                Las que faltan son las más raras del Reino — cerralo{" "}
+                <b style={{ color: "var(--rose)" }}>cambiando con alguien</b> o canjeando más
+                códigos.
               </p>
               <button className="fk-btn rose mt14" onClick={onOpenTrade}>
-                Cambiar figus
+                Ir a cambiar
               </button>
             </div>
-          </>
-        )
+          )}
+        </>
       )}
 
-      <SectionHeader label="Doradas · el flex" />
+      <SectionHeader label="Doradas · pura suerte" />
       <div className="fk-gold-row">
-        {GOLD.map((g) => (
-          <div key={g.nm} className="fk-gcard">
-            <span className="lk">🔒</span>
+        {(golds.length
+          ? golds
+          : GOLD.map((g, i) => ({ idx: i, nm: g.nm, g: g.g, mine: false, taken: false, winnerName: null }))
+        ).map((g) => (
+          <div key={g.idx} className={`fk-gcard ${g.mine ? "won" : "locked"}`}>
+            <span className="lk">{g.mine ? "✨" : "🔒"}</span>
             <span className="glyph">{g.g}</span>
             <div className="fname">{g.nm}</div>
+            {g.taken && !g.mine && g.winnerName && (
+              <small style={{ fontSize: 8, color: "var(--muted-2)", marginTop: 2 }}>
+                de {g.winnerName}
+              </small>
+            )}
           </div>
         ))}
       </div>
-      <p className="fk-footnote">
-        Las doradas no hacen falta para ganar · son de pura suerte
-      </p>
+      <p className="fk-footnote">No hacen falta para ganar · cada dorada se lleva un colgante RGB 📿</p>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// TRADE SCREEN (cambiar figus)
+// ─────────────────────────────────────────────
+
+interface TradeScreenProps {
+  counts: Record<number, number>;
+  done: boolean;
+  busy: boolean;
+  myRequest: { id: string; figId: number } | null;
+  salonRequests: ReinoSalonReq[];
+  tradeCode: string;
+  onPubRequest: () => void;
+  onCancelRequest: () => void;
+  onFulfill: (requestId: string) => void;
+  onConnect: (code: string) => void;
+}
+
+function TradeScreen({
+  done,
+  busy,
+  myRequest,
+  salonRequests,
+  tradeCode,
+  onPubRequest,
+  onCancelRequest,
+  onFulfill,
+  onConnect,
+}: TradeScreenProps) {
+  const [input, setInput] = useState("");
+
+  if (done) {
+    return (
+      <div className="fk-pad app">
+        <div className="fk-wall" style={{ marginTop: "8vh" }}>
+          <span className="fk-pill">👑 Ya completaste el Reino</span>
+          <p className="fk-hint mt14">
+            Tus repetidas ahora valen oro: regalalas y salvá el álbum de alguien.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fk-pad app">
+      <SectionHeader label="Se busca" />
+      <div className="fk-card">
+        <p className="fk-hint">
+          Elegí una figu que te falte y tu pedido sale al salón. Cuando alguien la tenga repetida,
+          te la pasa y vas a verlo acá.
+        </p>
+        {myRequest != null ? (
+          <div className="fk-req mine">
+            <div className="fg">{fig(myRequest.figId).g}</div>
+            <div className="tx">
+              <div className="a">
+                Estás buscando <b>{fig(myRequest.figId).nm}</b>
+              </div>
+              <div className="b">Todo el Reino ve tu pedido</div>
+            </div>
+            <button className="fk-btn ghost sm" disabled={busy} onClick={onCancelRequest}>
+              ✕
+            </button>
+          </div>
+        ) : (
+          <button className="fk-btn rose mt14" disabled={busy} onClick={onPubRequest}>
+            🙋 Pedir una figu
+          </button>
+        )}
+      </div>
+
+      <SectionHeader label="Pedidos del salón" />
+      <div className="fk-card">
+        {salonRequests.length ? (
+          salonRequests.map((r) => {
+            const f = fig(r.figId);
+            return (
+              <div className="fk-req" key={r.id}>
+                <div className="fg">{f.g}</div>
+                <div className="tx">
+                  <div className="a">
+                    <b>{r.guestName}</b> busca <b>{f.nm}</b>
+                  </div>
+                  <div className="b">{r.canFulfill ? "La tenés repetida" : "No la tenés repetida"}</div>
+                </div>
+                {r.canFulfill && (
+                  <button className="fk-btn sm" disabled={busy} onClick={() => onFulfill(r.id)}>
+                    Ofrecer
+                  </button>
+                )}
+              </div>
+            );
+          })
+        ) : (
+          <p className="fk-hint">Nadie está buscando ahora mismo…</p>
+        )}
+      </div>
+
+      <SectionHeader label="Canje directo" />
+      <div className="fk-card fk-center">
+        <p className="fk-hint">¿Están cara a cara? Mostrale tu código o tipeá el suyo.</p>
+        <div className="fk-codebig mt8">{tradeCode}</div>
+        <p className="fk-hint" style={{ margin: "2px 0 12px" }}>
+          tu código
+        </p>
+        <input
+          className="fk-field"
+          inputMode="numeric"
+          maxLength={5}
+          placeholder="– – – –"
+          style={{ letterSpacing: ".4em", fontSize: 22 }}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+        />
+        <button
+          className="fk-btn mt14"
+          disabled={busy}
+          onClick={() => {
+            onConnect(input);
+            setInput("");
+          }}
+        >
+          {busy ? "Conectando…" : "Conectar"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// PRIZES SCREEN (premios)
+// ─────────────────────────────────────────────
+
+interface PrizesScreenProps {
+  prizes: ReinoPrize[];
+  colgantesLeft: number;
+  myColgantes: number;
+  doraLog: ReinoData["doraLog"];
+}
+
+function PrizesScreen({ prizes, colgantesLeft, myColgantes, doraLog }: PrizesScreenProps) {
+  const HOW: Record<string, string> = {
+    camara: "1º en completar el álbum",
+    reloj: "2º en completar el álbum",
+    peluche: "3º en completar el álbum",
+  };
+  return (
+    <div className="fk-pad app">
+      <SectionHeader label="Premios principales" />
+      <div className="fk-card" style={{ padding: "6px 16px 16px" }}>
+        {prizes.map((p) => (
+          <div key={p.key} className={`fk-req${p.winnerName ? " given" : ""}`}>
+            <div className="fg" style={{ fontSize: 24 }}>
+              {p.g}
+            </div>
+            <div className="tx">
+              <div className="a">
+                <b>{p.nm}</b>
+              </div>
+              <div className="b">
+                {p.winnerName ? `✓ ${p.mine ? "¡Lo ganaste vos!" : `Entregado a ${p.winnerName}`}` : HOW[p.key]}
+              </div>
+            </div>
+            {p.winnerName && <span className="chk">✓</span>}
+          </div>
+        ))}
+      </div>
+
+      <SectionHeader label={`Colgantes RGB · quedan ${colgantesLeft} de ${SEC_TOTAL}`} />
+      <div className="fk-card fk-center">
+        <div style={{ fontSize: 25, letterSpacing: 5, lineHeight: 1.5 }}>
+          {colgantesLeft > 0 ? "📿".repeat(colgantesLeft) : "✨ ¡Volaron todos! ✨"}
+        </div>
+        <p className="fk-hint mt14">
+          {SEC_TOTAL} colgantes RGB de Marti. Las <b style={{ color: "var(--gold-1)" }}>3 cartas
+          doradas</b> se llevan uno seguro — el resto se sortea durante la noche.
+        </p>
+        {myColgantes > 0 && <div className="fk-pill mt14">📿 Vos ya ganaste {myColgantes}</div>}
+      </div>
+
+      <SectionHeader label="Ganadores con carta dorada" />
+      <div className="fk-card" style={{ padding: "6px 16px 16px" }}>
+        {doraLog.length ? (
+          doraLog.map((e, i) => (
+            <div className={`fk-req${e.mine ? " mine" : ""}`} key={i}>
+              <div className="fg">✨</div>
+              <div className="tx">
+                <div className="a">
+                  <b>{e.mine ? "Vos" : e.name}</b> sacó la dorada <b>{e.goldNm}</b>
+                </div>
+                <div className="b">📿 Colgante RGB</div>
+              </div>
+            </div>
+          ))
+        ) : (
+          <p className="fk-hint">Todavía nadie sacó una dorada… puede ser tuya ✨</p>
+        )}
+      </div>
+      <p className="fk-footnote">Los premios se retiran en el Mercadito del Reino</p>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// REINO SCREEN (top 8 + feed)
+// ─────────────────────────────────────────────
+
+interface ReinoScreenProps {
+  feed: ReinoFeed[];
+  top: ReinoTop[];
+  onSync: () => void;
+}
+
+function ReinoScreen({ feed, top, onSync }: ReinoScreenProps) {
+  return (
+    <div className="fk-pad app">
+      <div className="fk-sh">
+        <div className="ln" />
+        <span>Top 8 del Reino</span>
+        <div className="ln" />
+        <button className="fk-btn ghost sm" onClick={onSync} style={{ padding: "7px 12px" }}>
+          ⟳ Actualizar
+        </button>
+      </div>
+      <div className="fk-card" style={{ paddingTop: 6 }}>
+        {top.length ? (
+          top.map((r, i) => (
+            <div key={i} className={`fk-lb${r.done ? " done" : ""}${r.mine ? " me" : ""}`}>
+              <span className="rk">{i + 1}</span>
+              <span className="lnm">{r.mine ? "Vos" : r.name}</span>
+              {r.done ? (
+                <span className="won">Reino completo 👑</span>
+              ) : (
+                <span className="ct">{r.uniques}/15</span>
+              )}
+              <div className="bar">
+                <i style={{ width: `${Math.round((r.uniques / 15) * 100)}%` }} />
+              </div>
+            </div>
+          ))
+        ) : (
+          <p className="fk-hint">Todavía no hay nadie en el Reino…</p>
+        )}
+      </div>
+
+      <SectionHeader label="Pasó en el Reino" />
+      <div className="fk-feed">
+        {feed.length ? (
+          feed.map((e) => (
+            <div className={`ev${e.mine ? " mine" : ""}`} key={e.id}>
+              <span className="ic">{e.kind}</span>
+              <div dangerouslySetInnerHTML={{ __html: e.text }} />
+            </div>
+          ))
+        ) : (
+          <p className="fk-hint">Todavía no pasó nada… abrí tu sobre 🎁</p>
+        )}
+      </div>
+      <p className="fk-footnote">Se actualiza solo · en vivo</p>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// ACCOUNT SCREEN (cuenta)
+// ─────────────────────────────────────────────
+
+interface AccountScreenProps {
+  name: string;
+  avatar: Avatar | null;
+  selfie: string | null;
+  nroPulsera: number | null;
+  mesa: number | null;
+  counts: Record<number, number>;
+  doradas: number;
+  colgantes: number;
+  tradeCode: string;
+  onEdit: () => void;
+  onSimGift: () => void;
+}
+
+function AccountScreen({
+  name,
+  avatar,
+  selfie,
+  nroPulsera,
+  mesa,
+  counts,
+  doradas,
+  colgantes,
+  tradeCode,
+  onEdit,
+  onSimGift,
+}: AccountScreenProps) {
+  const u = FIGS.filter((f) => (counts[f.id] || 0) > 0).length;
+  const reps = FIGS.reduce((a, f) => a + Math.max(0, (counts[f.id] || 0) - 1), 0);
+  const dor = doradas;
+
+  const stat = (n: number | string, l: string) => (
+    <div className="mini" style={{ flex: 1 }}>
+      <div
+        className="g"
+        style={{
+          fontSize: 24,
+          fontFamily: "'Cormorant Garamond'",
+          fontWeight: 700,
+          color: "var(--gold-1)",
+        }}
+      >
+        {n}
+      </div>
+      <div className="who">{l}</div>
+    </div>
+  );
+
+  return (
+    <div className="fk-pad app">
+      <div className="fk-card fk-center" style={{ marginTop: 4 }}>
+        <div
+          style={{
+            width: 76,
+            height: 76,
+            borderRadius: "50%",
+            margin: "0 auto",
+            overflow: "hidden",
+            background: "rgba(227,184,95,.13)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 36,
+          }}
+        >
+          <Face avatar={avatar} selfie={selfie} />
+        </div>
+        <h2
+          className="fk-serif"
+          style={{ fontWeight: 700, fontSize: 28, margin: "10px 0 6px", color: "#fff" }}
+        >
+          {name || "Invitado/a"}
+        </h2>
+        {nroPulsera != null && (
+          <div className="fk-pill">
+            Pulsera #{nroPulsera}
+            {mesa != null ? ` · Mesa ${mesa}` : ""}
+          </div>
+        )}
+      </div>
+
+      <div className="fk-swap" style={{ margin: "12px 0" }}>
+        {stat(`${u}/15`, "figus")}
+        {stat(reps, "repetidas")}
+        {stat(dor, "doradas")}
+        {stat(colgantes, "colgantes")}
+      </div>
+
+      <div className="fk-card fk-center">
+        <p className="fk-hint">Tu código de canje directo</p>
+        <div className="fk-codebig mt8">{tradeCode || "····"}</div>
+        <p className="fk-hint" style={{ marginTop: 2 }}>
+          Dáselo a quien quiera cambiar con vos
+        </p>
+      </div>
+
+      <SectionHeader label="Opciones" />
+      <button className="fk-btn ghost" onClick={onEdit}>
+        ✏️ Cambiar nombre o personaje
+      </button>
+      <button className="fk-btn ghost mt8" onClick={onSimGift}>
+        🛰️ Recibir un sobre regalo
+      </button>
+      <p className="fk-footnote">Tu pulsera es tu cuenta · el progreso queda guardado</p>
     </div>
   );
 }
@@ -868,24 +1388,25 @@ function AlbumScreen({
 // PACK SHEET
 // ─────────────────────────────────────────────
 
-interface PackSheetProps {
-  srcKey: string;
-  busy: boolean;
-  onOpen: () => void;
-}
-
-function PackSheet({ srcKey, busy, onOpen }: PackSheetProps) {
+function PackSheet({ token, busy, onOpen }: { token: string; busy: boolean; onOpen: () => void }) {
+  const { key, n } = parseToken(token);
+  const kick =
+    key === "start"
+      ? "Tu sobre de bienvenida"
+      : key === "gift"
+        ? "¡Regalo del Reino!"
+        : "¡Un sobre más!";
   return (
     <>
-      <div className="fk-kicker">
-        {srcKey === "start" ? "Tu sobre de bienvenida" : "¡Un sobre más!"}
-      </div>
-      {/* FIX: clase "busy" iba pegada sin espacio */}
+      <div className="fk-kicker">{kick}</div>
       <div className={`fk-envelope${busy ? " busy" : ""}`} onClick={onOpen}>
         <div className="fk-seal">✦</div>
       </div>
       <p className="fk-lead" style={{ maxWidth: 260 }}>
         {busy ? "Abriendo…" : "Tocá el sobre para abrirlo"}
+      </p>
+      <p className="fk-hint mt8">
+        {n} figu{n > 1 ? "s" : ""} adentro
       </p>
     </>
   );
@@ -895,45 +1416,34 @@ function PackSheet({ srcKey, busy, onOpen }: PackSheetProps) {
 // CODIGO ENTRY SHEET
 // ─────────────────────────────────────────────
 
-interface CodigoEntrySheetProps {
-  busy: boolean;
-  onSubmit: (code: string) => void;
-  onClose: () => void;
-  onToast: (msg: string) => void;
-}
-
 function CodigoEntrySheet({
   busy,
   onSubmit,
   onClose,
   onToast,
-}: CodigoEntrySheetProps) {
+}: {
+  busy: boolean;
+  onSubmit: (code: string) => void;
+  onClose: () => void;
+  onToast: (msg: string) => void;
+}) {
   const [code, setCode] = useState("");
-
   const handleSubmit = () => {
-    if (!code.trim()) {
-      onToast("Tipeá el código de la pantalla");
-      return;
-    }
+    if (!code.trim()) return onToast("Tipeá el código de la entrevista");
     onSubmit(code);
   };
-
   return (
     <div className="fk-modal-card">
-      <div className="fk-kicker fk-center">Código en pantalla</div>
+      <div className="fk-kicker fk-center">🎤 Código de entrevista</div>
       <p className="fk-hint fk-center mt8">
-        Cuando aparezca el código en la pantalla grande, tipealo acá para ganar
-        un sobre.
+        Conseguí códigos en las <b style={{ color: "var(--gold-1)" }}>entrevistas</b> y sorpresas de
+        la noche. Valen <b style={{ color: "var(--gold-1)" }}>+1, +3, +5 o +10</b> figus.
       </p>
       <input
         className="fk-field mt14"
-        maxLength={8}
+        maxLength={12}
         placeholder="CÓDIGO"
-        style={{
-          letterSpacing: ".3em",
-          textTransform: "uppercase",
-          fontSize: 20,
-        }}
+        style={{ letterSpacing: ".3em", textTransform: "uppercase", fontSize: 20 }}
         value={code}
         onChange={(e) => setCode(e.target.value)}
       />
@@ -951,43 +1461,32 @@ function CodigoEntrySheet({
 // TRIVIA SHEET
 // ─────────────────────────────────────────────
 
-interface TriviaSheetProps {
+function TriviaSheet({
+  trivia,
+  busy,
+  onAnswer,
+  onClose,
+}: {
   trivia: TriviaData;
   busy: boolean;
-  onAnswer: (answerIndex: number) => void;
+  onAnswer: (i: number) => void;
   onClose: () => void;
-}
-
-function TriviaSheet({ trivia, busy, onAnswer, onClose }: TriviaSheetProps) {
+}) {
   return (
     <div className="fk-modal-card">
-      <div className="fk-kicker fk-center">Trivia Disney</div>
+      <div className="fk-kicker fk-center">💡 Trivia Disney</div>
       <h2
         className="fk-serif fk-center"
-        style={{
-          margin: "10px 0 14px",
-          fontSize: 22,
-          color: "#fff",
-          lineHeight: 1.2,
-        }}
+        style={{ margin: "10px 0 14px", fontSize: 22, color: "#fff", lineHeight: 1.2 }}
       >
         {trivia.question}
       </h2>
       {trivia.options.map((opt, i) => (
-        <button
-          key={i}
-          className="fk-btn ghost mt8"
-          disabled={busy}
-          onClick={() => onAnswer(i)}
-        >
+        <button key={i} className="fk-btn ghost mt8" disabled={busy} onClick={() => onAnswer(i)}>
           {opt}
         </button>
       ))}
-      <button
-        className="fk-btn ghost mt14"
-        style={{ opacity: 0.6 }}
-        onClick={onClose}
-      >
+      <button className="fk-btn ghost mt14" style={{ opacity: 0.6 }} onClick={onClose}>
         Cerrar
       </button>
     </div>
@@ -995,46 +1494,117 @@ function TriviaSheet({ trivia, busy, onAnswer, onClose }: TriviaSheetProps) {
 }
 
 // ─────────────────────────────────────────────
-// PACK REVEAL SHEET
+// IG / CARTA SHEETS
 // ─────────────────────────────────────────────
 
-const RARITY_PARTICLE_COLORS: Record<Rarity, string[] | null> = {
-  comun: null,
+function IgSheet({ busy, onOk, onClose }: { busy: boolean; onOk: () => void; onClose: () => void }) {
+  return (
+    <div className="fk-modal-card">
+      <div className="fk-kicker">📸 Seguinos en Instagram</div>
+      <div className="fk-codebig mt8" style={{ fontSize: 26, letterSpacing: ".04em" }}>
+        @andro.show
+      </div>
+      <p className="fk-hint mt8">Seguinos y llevate una figu de regalo.</p>
+      <a
+        className="fk-btn mt14"
+        style={{ display: "block", textDecoration: "none" }}
+        href={INSTAGRAM_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        Abrir Instagram
+      </a>
+      <button className="fk-btn rose mt8" disabled={busy} onClick={onOk}>
+        ¡Ya los sigo! ✓
+      </button>
+      <button className="fk-btn ghost mt8" onClick={onClose}>
+        Ahora no
+      </button>
+    </div>
+  );
+}
+
+function CartaSheet({
+  busy,
+  cartasFound,
+  onOk,
+  onClose,
+}: {
+  busy: boolean;
+  cartasFound: number;
+  onOk: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fk-modal-card">
+      <div className="fk-kicker">🃏 Sobres escondidos</div>
+      <p className="fk-lead mt14">
+        Hay sobres físicos escondidos por todo el salón. Cada uno trae figus adentro.
+      </p>
+      <p className="fk-hint mt8">
+        Encontraste {cartasFound} de {CARTAS_MAX} posibles
+      </p>
+      <button className="fk-btn mt14" disabled={busy} onClick={onOk}>
+        ¡Encontré uno! Canjearlo
+      </button>
+      <button className="fk-btn ghost mt8" onClick={onClose}>
+        Sigo buscando
+      </button>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// PACK REVEAL SHEET (reveal de a una)
+// ─────────────────────────────────────────────
+
+const RARITY_PARTICLE_COLORS: Record<Rarity, string[]> = {
+  comun: ["#cbb9e8", "#b6abd4", "#fff"],
   rara: ["#f1a8c6", "#d76a98", "#fce4ef"],
   epica: ["#f6dd99", "#e3b85f", "#fffbe8"],
   m: ["#f1a8c6", "#d76a98", "#ff8fc0", "#fce4ef"],
 };
 
-interface PackRevealSheetProps {
-  cards: { f: Fig; isNew: boolean }[];
-  onClose: () => void;
+const RARITY_LABEL: Record<Rarity, string> = {
+  comun: "Común",
+  rara: "Especial",
+  epica: "Legendaria",
+  m: "Especial",
+};
+const RARITY_STARS: Record<Rarity, number> = { comun: 1, rara: 2, epica: 3, m: 2 };
+
+function vibrate(p: number | number[]) {
+  if (typeof navigator !== "undefined" && navigator.vibrate) {
+    try {
+      navigator.vibrate(p);
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
-function PackRevealSheet({ cards, onClose }: PackRevealSheetProps) {
-  const [cur, setCur] = useState(-1);
-  const [revealed, setRevealed] = useState<number[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [showCta, setShowCta] = useState(false);
-  const [kicker, setKicker] = useState("");
-  const [flashOn, setFlashOn] = useState(false);
+// Reveal de a una carta con flip (front monograma ✦ → back figu), como
+// martireino: tocás la carta, se da vuelta con brillo/confetti, y pasás a
+// la siguiente; al final un resumen con todas.
+function PackRevealSheet({
+  cards,
+  onClose,
+}: {
+  cards: { f: Fig; isNew: boolean }[];
+  onClose: () => void;
+}) {
+  const [i, setI] = useState(0);
+  const [flipped, setFlipped] = useState(false);
+  const [showNext, setShowNext] = useState(false);
+  const [summary, setSummary] = useState(false);
 
-  const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const activeCardRef = useRef<HTMLDivElement | null>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
   const particlesRef = useRef<
-    {
-      x: number;
-      y: number;
-      vx: number;
-      vy: number;
-      r: number;
-      alpha: number;
-      color: string;
-      rot: number;
-      rotV: number;
-    }[]
+    { x: number; y: number; vx: number; vy: number; r: number; alpha: number; color: string; rot: number; rotV: number }[]
   >([]);
   const rafRef = useRef<number>(0);
+  const flipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const resize = () => {
@@ -1076,22 +1646,22 @@ function PackRevealSheet({ cards, onClose }: PackRevealSheetProps) {
     return () => cancelAnimationFrame(rafRef.current);
   }, []);
 
-  // Revelar la primera carta automáticamente al montar
-  useEffect(() => {
-    const t = setTimeout(() => handleTap(), 120);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useEffect(
+    () => () => {
+      if (flipTimer.current) clearTimeout(flipTimer.current);
+    },
+    [],
+  );
 
-  const spawn = (colors: string[]) => {
+  const spawn = (colors: string[], count: number) => {
     const canvas = canvasRef.current;
-    const stage = stageRef.current;
-    if (!canvas || !stage) return;
-    const sr = stage.getBoundingClientRect();
+    const card = cardRef.current;
+    if (!canvas || !card) return;
+    const sr = card.getBoundingClientRect();
     const pr = canvas.parentElement!.getBoundingClientRect();
     const cx = sr.left - pr.left + sr.width / 2;
     const cy = sr.top - pr.top + sr.height / 2;
-    for (let i = 0; i < 44; i++) {
+    for (let k = 0; k < count; k++) {
       const a = Math.random() * Math.PI * 2;
       const s = 3 + Math.random() * 6;
       particlesRef.current.push({
@@ -1108,552 +1678,338 @@ function PackRevealSheet({ cards, onClose }: PackRevealSheetProps) {
     }
   };
 
-  const makeCardEl = (
-    c: { f: Fig; isNew: boolean },
-    idx: number,
-  ): HTMLDivElement => {
-    const el = document.createElement("div");
-    const borderMap: Record<Rarity, string> = {
-      comun: "rgba(255,255,255,.09)",
-      rara: "rgba(241,168,198,.55)",
-      epica: "#f6dd99",
-      m: "#f1a8c6",
-    };
-    const shadowMap: Record<Rarity, string> = {
-      comun: "0 14px 44px rgba(0,0,0,.55)",
-      rara: "0 0 0 1.5px rgba(241,168,198,.45),0 14px 36px rgba(215,106,152,.3)",
-      epica: "0 0 0 1.5px #f6dd99,0 14px 44px rgba(227,184,95,.4)",
-      m: "0 0 0 2px #d76a98, 0 0 18px 4px rgba(215,106,152,.6), 0 14px 44px rgba(215,106,152,.35)",
-    };
-    const mBadge =
-      c.f.r === "m"
-        ? `<div style="margin-top:6px;font-size:8px;font-weight:900;letter-spacing:.07em;text-transform:uppercase;
-           border-radius:6px;padding:2px 8px;
-           background:linear-gradient(135deg,#f1a8c6,#d76a98);
-           color:#3a0f23;display:inline-block">✦ ESPECIAL M</div>`
-        : "";
-    Object.assign(el.style, {
-      position: "absolute",
-      inset: "0",
-      borderRadius: "14px",
-      display: "flex",
-      flexDirection: "column",
-      alignItems: "center",
-      justifyContent: "center",
-      textAlign: "center",
-      padding: "12px 8px",
-      background: "linear-gradient(160deg,#2c1f5a,#160f33)",
-      border: `2px solid ${borderMap[c.f.r]}`,
-      boxShadow: shadowMap[c.f.r],
-      willChange: "transform,opacity",
-      transform: "translateY(140px) rotate(-20deg) scale(.75)",
-      opacity: "0",
-      transition: "none",
-    });
-    el.innerHTML = `
-      <span style="font-size:9px;font-weight:800;color:var(--muted-2);position:absolute;top:8px;left:10px">${String(idx + 1).padStart(2, "0")}</span>
-      <span style="font-size:60px;margin:4px 0 8px;filter:drop-shadow(0 4px 14px rgba(0,0,0,.5))">${c.f.g}</span>
-      <div style="font-family:'Cormorant Garamond',serif;font-weight:700;font-size:18px;color:${c.f.r === "m" ? "#f1a8c6" : "#fff"};line-height:1.1">${c.f.nm}</div>
-      <div style="font-size:9px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-top:5px">${c.f.film}</div>
-      ${mBadge}
-      <div style="margin-top:${c.f.r === "m" ? "6" : "10"}px;font-weight:900;font-size:9px;letter-spacing:.07em;text-transform:uppercase;border-radius:8px;padding:3px 10px;
-        background:${c.isNew ? "rgba(126,224,168,.18)" : "rgba(241,168,198,.15)"};
-        color:${c.isNew ? "#7ee0a8" : "var(--rose)"};
-        border:1px solid ${c.isNew ? "rgba(126,224,168,.3)" : "rgba(241,168,198,.25)"}">
-        ${c.isNew ? "¡NUEVA!" : "repetida"}
-      </div>`;
-    return el;
+  const total = cards.length;
+  const c = cards[i]!;
+
+  const advance = () => {
+    if (flipTimer.current) clearTimeout(flipTimer.current);
+    if (i < total - 1) {
+      setI(i + 1);
+      setFlipped(false);
+      setShowNext(false);
+    } else {
+      setSummary(true);
+    }
   };
 
-  const EXIT_DIRS = [
-    [0, -1],
-    [1, -0.5],
-    [-1, -0.5],
-    [0.7, -0.7],
-    [-0.7, -0.7],
-  ] as const;
-
-  const handleTap = () => {
-    if (busy || cur >= cards.length - 1) return;
-    setBusy(true);
-
-    const next = cur + 1;
-    const c = cards[next];
-    if (!c) {
-      setBusy(false);
-      return;
+  const onTap = () => {
+    if (!flipped) {
+      setFlipped(true);
+      const big = c.isNew && (c.f.r === "epica" || c.f.r === "m");
+      vibrate(big ? [18, 50, 18] : c.isNew ? [14, 40] : 12);
+      if (c.isNew) spawn(RARITY_PARTICLE_COLORS[c.f.r], big ? 60 : 30);
+      if (flipTimer.current) clearTimeout(flipTimer.current);
+      flipTimer.current = setTimeout(() => setShowNext(true), 700);
+    } else {
+      advance();
     }
-    const stage = stageRef.current;
-    if (!stage) {
-      setBusy(false);
-      return;
-    }
-
-    const incoming = makeCardEl(c, next);
-    stage.appendChild(incoming);
-
-    if (activeCardRef.current) {
-      const old = activeCardRef.current;
-      const [dx, dy] = EXIT_DIRS[
-        Math.floor(Math.random() * EXIT_DIRS.length)
-      ] ?? [0, 0];
-      Object.assign(old.style, {
-        transition: "transform .38s cubic-bezier(.4,0,1,1),opacity .3s",
-        transform: `translate(${dx * 360}px,${dy * 360}px) rotate(${dx * 22}deg) scale(.55)`,
-        opacity: "0",
-      });
-      setTimeout(() => old.remove(), 420);
-    }
-
-    setFlashOn(true);
-    setTimeout(() => setFlashOn(false), 80);
-
-    const colors = RARITY_PARTICLE_COLORS[c.f.r];
-    if (colors) spawn(colors);
-
-    setKicker(
-      c.f.r === "epica"
-        ? "✦ ¡Épica!"
-        : c.f.r === "m"
-          ? "✦ ¡Especial M!"
-          : c.f.r === "rara"
-            ? "★ Rara"
-            : "",
-    );
-
-    requestAnimationFrame(() =>
-      requestAnimationFrame(() => {
-        Object.assign(incoming.style, {
-          transition:
-            "transform .48s cubic-bezier(.15,.8,.25,1.1), opacity .22s",
-          transform: "translateY(0) rotate(0deg) scale(1)",
-          opacity: "1",
-        });
-      }),
-    );
-
-    activeCardRef.current = incoming;
-    setCur(next);
-
-    setTimeout(() => {
-      setRevealed((prev) => {
-        const updated = [...prev, next];
-        if (updated.length === cards.length) {
-          setKicker("¡Sobre completo!");
-          setTimeout(() => setShowCta(true), 280);
-        }
-        return updated;
-      });
-      setBusy(false);
-    }, 260);
   };
 
-  const isDone = revealed.length >= cards.length;
-  const remaining = cards.length - 1 - cur;
+  const canvas = (
+    <canvas
+      ref={canvasRef}
+      style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 15 }}
+    />
+  );
+
+  if (summary) {
+    return (
+      <>
+        {canvas}
+        <div className="fk-kicker">Tu sobre</div>
+        <div className="fk-reveal mt14">
+          {cards.map((cc, k) => (
+            <div
+              key={k}
+              className={`fk-flip go ${cc.isNew ? "new" : "rep"} ${cc.f.r}`}
+              style={{ animationDelay: `${k * 0.06}s` }}
+            >
+              <div className="inner">
+                <div className="fk-face fr">
+                  <span className="mono">✦</span>
+                </div>
+                <div className="fk-face bk">
+                  <span className="g">{cc.f.g}</span>
+                  <div className="nm">{cc.f.nm}</div>
+                  <div className="tag">{cc.isNew ? "¡Nueva!" : "Repetida"}</div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <button className="fk-btn mt20" style={{ maxWidth: 240 }} onClick={onClose}>
+          Ver mi álbum
+        </button>
+      </>
+    );
+  }
 
   return (
     <>
-      <canvas
-        ref={canvasRef}
-        style={{
-          position: "absolute",
-          inset: 0,
-          pointerEvents: "none",
-          zIndex: 15,
-        }}
-      />
-
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          borderRadius: "inherit",
-          background: "#fff",
-          zIndex: 20,
-          pointerEvents: "none",
-          opacity: flashOn ? 0.55 : 0,
-          transition: flashOn ? "none" : "opacity .08s",
-        }}
-      />
-
-      <div className="fk-kicker" style={{ minHeight: 16 }}>
-        {kicker}
-      </div>
-
-      <div
-        style={{
-          position: "relative",
-          width: 158,
-          height: 222,
-          margin: "0 auto 18px",
-          flexShrink: 0,
-          opacity: cur >= 0 ? 1 : 0,
-          transition: "opacity .2s",
-        }}
-      >
-        {!isDone &&
-          Array.from({
-            length: Math.min(remaining > 0 ? remaining : cards.length - 1, 3),
-          }).map((_, i) => {
-            const depth = i + 1;
-            const maxDepth = Math.min(
-              remaining > 0 ? remaining : cards.length - 1,
-              3,
-            );
-            const idx = maxDepth - depth;
-            return (
-              <div
-                key={i}
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  borderRadius: "14px",
-                  background: "linear-gradient(160deg,#1e1542,#100b2a)",
-                  border: "1px solid rgba(255,255,255,0.06)",
-                  transform: `translateY(${(idx + 1) * 5}px) translateX(${(idx % 2 === 0 ? 1 : -1) * (idx + 1) * 3}px) rotate(${(idx % 2 === 0 ? 1 : -1) * (idx + 1) * 2.5}deg) scale(${1 - (idx + 1) * 0.025})`,
-                  zIndex: -(idx + 1),
-                  opacity: 0.55 - idx * 0.12,
-                }}
-              />
-            );
-          })}
+      {canvas}
+      <div className="fk-stage">
+        <div className="count">
+          Figu {i + 1} de {total}
+        </div>
+        <div className="dots">
+          {cards.map((_, k) => (
+            <i key={k} className={k < i ? "done" : k === i ? "cur" : ""} />
+          ))}
+        </div>
 
         <div
-          ref={stageRef}
-          style={{
-            position: "absolute",
-            inset: 0,
-            cursor: isDone ? "default" : "pointer",
-            zIndex: 1,
-          }}
-          onClick={isDone ? undefined : handleTap}
-        />
-      </div>
-
-      <div
-        style={{
-          display: "flex",
-          gap: 7,
-          alignItems: "flex-end",
-          justifyContent: "center",
-          minHeight: 74,
-          marginBottom: 14,
-        }}
-      >
-        {cards.map((c, i) => {
-          const show = revealed.includes(i);
-          const borderMap: Record<Rarity, string> = {
-            comun: "rgba(255,255,255,.08)",
-            rara: "rgba(241,168,198,.4)",
-            epica: "rgba(246,221,153,.55)",
-            m: "#d76a98",
-          };
-          const shadowMap: Record<Rarity, string> = {
-            comun: "none",
-            rara: "none",
-            epica: "none",
-            m: "0 0 8px 2px rgba(215,106,152,.5)",
-          };
-          return (
-            <div
-              key={i}
-              style={{
-                width: 50,
-                height: 68,
-                borderRadius: 10,
-                flexShrink: 0,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                padding: "5px 3px",
-                textAlign: "center",
-                background:
-                  "linear-gradient(160deg,rgba(40,28,80,.9),rgba(20,13,49,.9))",
-                border: `${c.f.r === "m" ? "2px" : "1px"} solid ${borderMap[c.f.r]}`,
-                boxShadow: shadowMap[c.f.r],
-                opacity: show ? 1 : 0,
-                transform: show
-                  ? "scale(1) translateY(0)"
-                  : "scale(.7) translateY(8px)",
-                transition:
-                  "opacity .32s, transform .32s cubic-bezier(.2,.8,.2,1)",
-              }}
-            >
-              <div style={{ fontSize: 20 }}>{c.f.g}</div>
-              <div
-                style={{
-                  fontFamily: "'Cormorant Garamond',serif",
-                  fontWeight: 600,
-                  fontSize: 10,
-                  color: c.f.r === "m" ? "#f1a8c6" : "#fff",
-                  marginTop: 3,
-                  lineHeight: 1.1,
-                }}
-              >
-                {c.f.nm.split(" ").slice(1).join(" ")}
+          ref={cardRef}
+          className={`fk-bigcard r-${c.f.r}${flipped ? " go" : ""}`}
+          onClick={onTap}
+        >
+          <div className="tagwrap">
+            <span className={`fk-tag ${c.isNew ? "new" : "rep"}`}>
+              {c.isNew ? "¡Nueva!" : "Repetida"}
+            </span>
+          </div>
+          <div className="in">
+            <div className="fk-bcface fr">
+              <span className="mono">✦</span>
+            </div>
+            <div className="fk-bcface bk">
+              <div className="fk-bc-in">
+                <div className="fk-bc-no">{String(c.f.id).padStart(2, "0")}</div>
+                <div className="fk-bc-rar">
+                  <b>{RARITY_LABEL[c.f.r]}</b>
+                  <span>{"★".repeat(RARITY_STARS[c.f.r])}</span>
+                </div>
+                <div className="fk-bc-art">
+                  <span className="glyph">{c.f.g}</span>
+                </div>
+                <div className="fk-bc-plate">
+                  <div className="nm">{c.f.nm}</div>
+                  <div className="fm">✦ {c.f.film} ✦</div>
+                </div>
               </div>
             </div>
-          );
-        })}
-      </div>
+          </div>
+        </div>
 
-      {/* FIX: el contador tenía dos estados duplicados (counterText +
-          revealed) que podían desincronizarse — ahora se deriva. */}
-      <div
-        className="fk-hint"
-        style={{
-          textAlign: "center",
-          marginBottom: 12,
-          minHeight: 16,
-          fontSize: 11,
-          fontWeight: 800,
-          letterSpacing: ".08em",
-          textTransform: "uppercase",
-        }}
-      >
-        {revealed.length > 0 &&
-          (isDone ? (
-            <>¡Todas reveladas! 🎉</>
+        <div className="next">
+          {showNext ? (
+            <button className="fk-btn sm" onClick={advance}>
+              {i < total - 1 ? "Siguiente ✦" : "Ver resumen"}
+            </button>
           ) : (
-            <>
-              <span style={{ color: "var(--gold-1)" }}>{revealed.length}</span>{" "}
-              de {cards.length} reveladas
-            </>
-          ))}
+            <span className="nexthint">Tocá la carta para darla vuelta</span>
+          )}
+        </div>
       </div>
+    </>
+  );
+}
 
-      <button
-        className="fk-btn"
-        style={{
-          maxWidth: 240,
-          opacity: showCta ? 1 : 0,
-          transform: showCta ? "translateY(0)" : "translateY(10px)",
-          transition: "opacity .3s, transform .3s",
-          pointerEvents: showCta ? "auto" : "none",
-        }}
-        onClick={onClose}
-      >
-        Ver mi álbum
-      </button>
+
+// ─────────────────────────────────────────────
+// DORADA OVERLAY
+// ─────────────────────────────────────────────
+
+function DoradaOverlay({ idx, onClose }: { idx: number; onClose: () => void }) {
+  const g = GOLD[idx]!;
+  return (
+    <>
+      <div className="fk-rays" />
+      <div style={{ position: "relative", zIndex: 2 }} className="fk-center">
+        <div className="fk-kicker">✨ ¡Figurita dorada! ✨</div>
+        <div className="fk-ticket">
+          <div className="crown">{g.g}</div>
+          <div className="nm">{g.nm}</div>
+          <div className="sub">Dorada del Reino</div>
+        </div>
+        <div className="fk-pill mt14" style={{ fontSize: 13, padding: "10px 18px" }}>
+          📿 ¡Te llevás un colgante RGB de Marti!
+        </div>
+        <p className="fk-hint mt8">Retiralo en el Mercadito del Reino</p>
+        <button className="fk-btn mt20" style={{ maxWidth: 220 }} onClick={onClose}>
+          ¡Vamos!
+        </button>
+      </div>
     </>
   );
 }
 
 // ─────────────────────────────────────────────
-// TRADE CODE SHEET
+// COMPLETION OVERLAY
 // ─────────────────────────────────────────────
 
-interface TradeCodeSheetProps {
-  onConnect: (code: string) => void;
-  onClose: () => void;
-  onToast: (msg: string) => void;
-}
-
-function TradeCodeSheet({ onConnect, onClose, onToast }: TradeCodeSheetProps) {
-  const code = useRef(String(Math.floor(1000 + Math.random() * 9000)));
-  const [input, setInput] = useState("");
-
-  const handleConnect = () => {
-    if (input.trim().length < 4) {
-      onToast("Tipeá los 4 números");
-      return;
-    }
-    onConnect(input.trim());
-  };
-
-  return (
-    <div className="fk-modal-card">
-      <div className="fk-kicker fk-center">Cambiar figus</div>
-      <p className="fk-hint fk-center mt8">
-        Mostrale este código a la persona con la que querés cambiar, o tipeá el
-        suyo. Es 1 a 1, tranqui.
-      </p>
-      <div className="fk-codebox">
-        <b>{code.current}</b>
-      </div>
-      <p className="fk-center fk-hint" style={{ margin: "2px 0 16px" }}>
-        tu código
-      </p>
-      <input
-        className="fk-field"
-        inputMode="numeric"
-        maxLength={4}
-        placeholder="– – – –"
-        style={{ letterSpacing: ".4em", fontSize: 22 }}
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-      />
-      <button className="fk-btn mt14" onClick={handleConnect}>
-        Conectar
-      </button>
-      <button className="fk-btn ghost mt8" onClick={onClose}>
-        Cerrar
-      </button>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────
-// TRADE PROPOSE SHEET
-// ─────────────────────────────────────────────
-
-interface TradeProposeSheetProps {
-  counts: Record<number, number>;
-  guestIdx: number;
-  onAccept: (giveId: number, wantId: number) => void;
-  onSkip: () => void;
-  onClose: () => void;
-}
-
-function TradeProposeSheet({
-  counts,
-  guestIdx,
-  onAccept,
-  onSkip,
-  onClose,
-}: TradeProposeSheetProps) {
-  const owned = (id: number) => (counts[id] || 0) > 0;
-  const need = FIGS.filter((f) => !owned(f.id));
-  const dupes = FIGS.filter((f) => (counts[f.id] || 0) > 1);
-
-  if (!need.length) {
-    return (
-      <div className="fk-modal-card">
-        <div className="fk-kicker fk-center">¡Ya tenés todas!</div>
-        <button className="fk-btn mt20" onClick={onClose}>
-          Cerrar
-        </button>
-      </div>
-    );
-  }
-
-  const want = need[0]!;
-  const give = dupes[0] || FIGS.find((f) => owned(f.id));
-
-  if (!give) {
-    return (
-      <div className="fk-modal-card">
-        <div className="fk-kicker fk-center">Sin figus para cambiar</div>
-        <p className="fk-hint fk-center mt8">
-          Primero abrí un sobre para tener algo que ofrecer.
-        </p>
-        <button className="fk-btn mt20" onClick={onClose}>
-          Cerrar
-        </button>
-      </div>
-    );
-  }
-
-  const guest = GUESTS[guestIdx % GUESTS.length];
-  const guestName = guest?.split(" · ")[0];
-  const guestSub = guest?.includes("·") ? guest.split("· ")[1] : "";
-
-  return (
-    <div className="fk-modal-card">
-      <div className="fk-kicker fk-center">Conectaste con</div>
-      <h2
-        className="fk-serif fk-center"
-        style={{ margin: "4px 0 0", fontSize: 30, color: "#fff" }}
-      >
-        {guestName}
-      </h2>
-      <p className="fk-center fk-hint">
-        {guestSub ? `${guestSub} · ` : ""}te propone:
-      </p>
-      <div className="fk-swap">
-        <div className="mini">
-          <div className="g">{give.g}</div>
-          <div className="nm">{give.nm}</div>
-          <div className="who">vos das</div>
-        </div>
-        <div className="arrow">⇄</div>
-        <div className="mini">
-          <div className="g">{want.g}</div>
-          <div className="nm">{want.nm}</div>
-          <div className="who">te da</div>
-        </div>
-      </div>
-      <button className="fk-btn rose" onClick={() => onAccept(give.id, want.id)}>
-        Aceptar cambio
-      </button>
-      <button className="fk-btn ghost mt8" onClick={onSkip}>
-        Buscar otra persona
-      </button>
-      <button className="fk-btn ghost mt8" style={{ opacity: 0.6 }} onClick={onClose}>
-        Cerrar
-      </button>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────
-// DONE SCREEN
-// ─────────────────────────────────────────────
-
-interface DoneScreenProps {
+function CompletionOverlay({
+  name,
+  avatar,
+  selfie,
+  prizeNm,
+  onStay,
+}: {
   name: string;
-  onReset: () => void;
+  avatar: Avatar | null;
+  selfie: string | null;
+  prizeNm: string | null;
+  onStay: () => void;
+}) {
+  return (
+    <>
+      <div className="fk-rays" />
+      <div style={{ position: "relative", zIndex: 2 }} className="fk-center">
+        <div className="fk-kicker">¡Completaste el Reino!</div>
+        <div className="fk-ticket">
+          {selfie ? (
+            <div
+              style={{
+                width: 64,
+                height: 64,
+                borderRadius: "50%",
+                overflow: "hidden",
+                margin: "0 auto",
+                border: "2px solid var(--gold-1)",
+              }}
+            >
+              <Face avatar={avatar} selfie={selfie} />
+            </div>
+          ) : (
+            <div className="crown">{avatar ? avatar.g : "👑"}</div>
+          )}
+          <div className="nm">{name || "Vos"}</div>
+          <div className="sub">Carta dorada de Marti</div>
+          <div style={{ fontSize: 28, marginTop: 10 }}>🤍</div>
+        </div>
+        {prizeNm ? (
+          <div className="fk-pill mt14" style={{ fontSize: 13, padding: "10px 18px" }}>
+            🏆 ¡Ganaste {prizeNm}!
+          </div>
+        ) : (
+          <div className="fk-pill mt14" style={{ fontSize: 13, padding: "10px 18px" }}>
+            👑 Reino completo — pasá por el Mercadito
+          </div>
+        )}
+        <p className="fk-lead mt14" style={{ maxWidth: 280, marginInline: "auto" }}>
+          Pasá por el <b style={{ color: "var(--gold-1)" }}>Mercadito del Reino</b>: Marti te entrega
+          la carta en mano.
+        </p>
+        <button className="fk-btn mt20" style={{ maxWidth: 240 }} onClick={onStay}>
+          Seguir mirando el Reino
+        </button>
+      </div>
+    </>
+  );
 }
 
-function DoneScreen({ name, onReset }: DoneScreenProps) {
-  const serial = useRef(
-    String(Math.floor(1 + Math.random() * 200)).padStart(3, "0"),
-  );
+// ─────────────────────────────────────────────
+// TRADE SHEETS
+// ─────────────────────────────────────────────
 
+function PickRequestSheet({
+  counts,
+  onPick,
+  onClose,
+}: {
+  counts: Record<number, number>;
+  onPick: (id: number) => void;
+  onClose: () => void;
+}) {
+  const missing = FIGS.filter((f) => (counts[f.id] || 0) === 0);
   return (
-    <div
-      style={{
-        position: "relative",
-        minHeight: "78vh",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        textAlign: "center",
-      }}
-    >
-      <div className="fk-rays" />
-      <div className="fk-kicker" style={{ position: "relative", zIndex: 2 }}>
-        ¡Completaste el reino!
+    <div className="fk-modal-card">
+      <div className="fk-kicker fk-center">¿Cuál te falta?</div>
+      <div className="fk-opts">
+        {missing.map((f) => (
+          <div key={f.id} className="fk-opt" onClick={() => onPick(f.id)}>
+            <span className="k">{f.g}</span>
+            {f.nm}
+            <small>{f.film}</small>
+          </div>
+        ))}
       </div>
-      <div className="fk-goldcard mt14">
-        <div className="crown">👑</div>
-        <div className="nm">{name}</div>
-        <div className="sub">Carta dorada de Marti</div>
-        <div style={{ fontSize: 30, marginTop: 10 }}>🤍</div>
-        <div className="serial">N.º {serial.current} / 200</div>
+      <button className="fk-btn ghost mt14" onClick={onClose}>
+        Cerrar
+      </button>
+    </div>
+  );
+}
+
+// Resultado de un canje directo por código (cara a cara).
+function CodeResultSheet({
+  otherName,
+  gave,
+  got,
+  onClose,
+}: {
+  otherName: string;
+  gave: { nm: string; g: string } | null;
+  got: { nm: string; g: string } | null;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fk-modal-card">
+      <div className="fk-kicker fk-center">Cambio con</div>
+      <h2 className="fk-serif fk-center" style={{ margin: "4px 0 0", fontSize: 30, color: "#fff" }}>
+        {otherName}
+      </h2>
+      <div className="fk-swap">
+        {gave && (
+          <>
+            <div className="mini">
+              <div className="g">{gave.g}</div>
+              <div className="nm">{gave.nm}</div>
+              <div className="who">le diste</div>
+            </div>
+            <div className="arrow">⇄</div>
+          </>
+        )}
+        {got ? (
+          <div className="mini">
+            <div className="g">{got.g}</div>
+            <div className="nm">{got.nm}</div>
+            <div className="who">te llevaste</div>
+          </div>
+        ) : (
+          <div className="mini" style={{ maxWidth: 160 }}>
+            <div className="g">🤍</div>
+            <div className="nm">Le diste una mano</div>
+            <div className="who">gesto del Reino</div>
+          </div>
+        )}
       </div>
-      <p
-        className="fk-lead mt20"
-        style={{ position: "relative", zIndex: 2, maxWidth: 280 }}
-      >
-        Sos de las pocas personas que completaron el álbum. Mostrá esta
-        pantalla en el{" "}
-        <b style={{ color: "var(--gold-1)" }}>Mercadito del Reino</b> para
-        recibir tu carta dorada de verdad, de mano de Marti.
-      </p>
-      <div className="fk-pill mt14" style={{ position: "relative", zIndex: 2 }}>
-        ✦ Tu nombre va a la pantalla grande
-      </div>
-      <button
-        className="fk-btn ghost mt20"
-        style={{ position: "relative", zIndex: 2, maxWidth: 200 }}
-        onClick={onReset}
-      >
-        Reiniciar demo
+      <button className="fk-btn" onClick={onClose}>
+        ¡Genial!
       </button>
     </div>
   );
 }
 
 // ─────────────────────────────────────────────
-// TOAST
+// NAV + GIFT BAR + TOAST
 // ─────────────────────────────────────────────
+
+function Nav({ tab, unread, onTab }: { tab: Tab; unread: number; onTab: (t: Tab) => void }) {
+  const items: { k: Tab; ic: string; label: string; gold?: boolean }[] = [
+    { k: "album", ic: "📔", label: "Álbum" },
+    { k: "trade", ic: "🔄", label: "Cambiar" },
+    { k: "prizes", ic: "🏆", label: "Premios", gold: true },
+    { k: "reino", ic: "🏰", label: "Reino" },
+    { k: "account", ic: "👤", label: "Cuenta" },
+  ];
+  return (
+    <nav className="fk-nav">
+      {items.map((it) => (
+        <button
+          key={it.k}
+          className={`${it.gold ? "gold" : ""}${tab === it.k ? " act" : ""}`}
+          onClick={() => onTab(it.k)}
+        >
+          <span className="ic">{it.ic}</span>
+          {it.label}
+          {it.k === "reino" && unread > 0 && <span className="dot">{Math.min(unread, 9)}</span>}
+        </button>
+      ))}
+    </nav>
+  );
+}
 
 function Toast({ message, visible }: { message: string; visible: boolean }) {
-  // FIX: clase "on" iba pegada sin espacio ("fk-toaston"), el toast
-  // nunca se mostraba con sus estilos.
   return <div className={`fk-toast${visible ? " on" : ""}`}>{message}</div>;
 }
 
@@ -1661,51 +2017,54 @@ function Toast({ message, visible }: { message: string; visible: boolean }) {
 // ROOT APP
 // ─────────────────────────────────────────────
 
-type AlbumData = Awaited<ReturnType<typeof loadAlbum>>;
-type OpenPackResult = Awaited<ReturnType<typeof openPack>>;
+
+const PRIZE_NM: Record<string, string> = {
+  camara: "Cámara instantánea",
+  reloj: "Reloj Disney",
+  peluche: "Peluche Disney",
+};
+
 
 export default function Page({ guestId }: { guestId: string }) {
-  const [state, setState] = useState<State>({
+  const [core, setCore] = useState<Core>({
     screen: "intro",
+    tab: "album",
     name: "",
     avatar: null,
+    selfie: null,
     counts: {},
     packsRaw: [],
-    guestIdx: 0,
+    nroPulsera: null,
+    mesa: null,
   });
+  const [reino, setReino] = useState<ReinoData | null>(null);
+  const [local, setLocal] = useState<Local>({ gift: null });
 
   const [sheet, setSheet] = useState<SheetMode>({ type: "none" });
   const [toast, setToast] = useState({ msg: "", visible: false });
   const [pending, setPending] = useState(false);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [nowTick, setNowTick] = useState(0);
+  const [unread, setUnread] = useState(0);
 
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const introPlayed = useRef(false);
   const [introPlaying, setIntroPlaying] = useState(true);
-  const [albumData, setAlbumData] = useState<AlbumData | null>(null);
+  const hydratedRef = useRef(false);
   const welcomeOffered = useRef(false);
+  const completionShownRef = useRef(false);
+  const pendingPrizeRef = useRef<string | null>(null);
+  const lastSeenRef = useRef<string | null>(null);
+  const reinoFirstRef = useRef(true); // primer loadReino: no re-mostrar completion
 
-  // ── Pre-apertura de sobres ──
-  // El request a openPack se dispara en background apenas aparece el
-  // sheet del sobre, ANTES del tap: corre mientras el invitado mira el
-  // sobre animado, así al tocarlo el resultado ya está resuelto y la
-  // revelación es instantánea.
-  // IMPORTANTE: el prefetch NO se hace antes (p. ej. en la intro)
-  // porque openPack consume el sobre — un reload antes del tap lo
-  // dejaría marcado como usado en DB y no volvería a aparecer.
-  const packPrefetch = useRef<Map<string, Promise<OpenPackResult>>>(new Map());
+  // refs espejo para leer estado fresco en callbacks
+  const tabRef = useRef<Tab>(core.tab);
+  tabRef.current = core.tab;
+  const sheetRef = useRef<SheetMode>(sheet);
+  sheetRef.current = sheet;
+  const completionPendingRef = useRef(false);
+  const pendingCompletionPrizeRef = useRef<string | null>(null);
 
-  const prefetchPack = useCallback(
-    (srcKey: string) => {
-      if (packPrefetch.current.has(srcKey)) return;
-      const p = openPack(guestId, srcKey);
-      // El error real se maneja al consumir; esto solo evita
-      // un "unhandled rejection" si falla antes del tap.
-      p.catch(() => {});
-      packPrefetch.current.set(srcKey, p);
-    },
-    [guestId],
-  );
-
+  // ── inyectar CSS una vez ──
   useEffect(() => {
     const id = "fk-styles";
     if (!document.getElementById(id)) {
@@ -1719,127 +2078,227 @@ export default function Page({ guestId }: { guestId: string }) {
   const showToast = useCallback((msg: string) => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     setToast({ msg, visible: true });
-    toastTimer.current = setTimeout(
-      () => setToast((t) => ({ ...t, visible: false })),
-      2200,
-    );
+    toastTimer.current = setTimeout(() => setToast((t) => ({ ...t, visible: false })), 2300);
   }, []);
 
-  useEffect(() => {
-    loadAlbum(guestId)
-      .then(setAlbumData)
-      .catch(() => showToast("Error cargando el álbum"));
-  }, [guestId, showToast]);
+  // ── refrescar el Reino real (feed/top/premios/doradas/pedidos) + sincronizar
+  //    mis counts/packsLeft (cambian cuando otros canjean conmigo). ──
+  const refreshReino = useCallback(async () => {
+    try {
+      const r = await loadReino(guestId);
+      setReino(r);
+      setCore((s) => ({ ...s, counts: r.myCounts, packsRaw: r.myPacksLeft }));
 
-  useEffect(() => {
-    if (!albumData) return;
-    if ("error" in albumData) {
-      showToast(albumData.error ?? "Error cargando el álbum");
-      return;
+      const topId = r.feed[0]?.id ?? null;
+      if (tabRef.current === "reino") {
+        setUnread(0);
+        lastSeenRef.current = topId;
+      } else if (topId && topId !== lastSeenRef.current) {
+        const idx = lastSeenRef.current ? r.feed.findIndex((e) => e.id === lastSeenRef.current) : -1;
+        setUnread(idx < 0 ? r.feed.length : idx);
+      }
+
+      if (r.completed && !completionShownRef.current) {
+        if (reinoFirstRef.current) {
+          // ya estaba completo al cargar: no re-mostrar el overlay (el álbum
+          // ya indica "Reino completo"). Solo se muestra en una completion fresca.
+          completionShownRef.current = true;
+        } else {
+          const pn = r.prizes.find((p) => p.mine)?.nm ?? null;
+          if (sheetRef.current.type === "none") {
+            completionShownRef.current = true;
+            setSheet({ type: "completion", prizeNm: pn });
+          } else {
+            // hay un sheet abierto (reveal, etc.): se muestra al cerrarse
+            completionPendingRef.current = true;
+            pendingCompletionPrizeRef.current = pn;
+          }
+        }
+      }
+      reinoFirstRef.current = false;
+    } catch {
+      /* la próxima sync / evento realtime reintenta */
     }
-    const savedAvatar = albumData.guest.avatar
-      ? (AVATARS.find((a) => a.n === albumData.guest.avatar) ?? null)
-      : null;
+  }, [guestId]);
 
-    setState((s) => {
-      const name = s.name || albumData.guest.name || "";
-      const avatar = s.avatar || savedAvatar;
-      return {
-        ...s,
-        name,
-        avatar,
-        counts: albumData.album.counts,
-        packsRaw: albumData.album.packsLeft,
-        // FIX: si el perfil ya está completo, salteamos la intro desde
-        // acá (una sola vez), en lugar del useEffect dentro de
-        // IntroScreen que llamaba onEnter dos veces.
-        screen:
-          s.screen === "intro" && name && avatar ? "album" : s.screen,
-      };
-    });
-  }, [albumData, showToast]);
-
-  // Pre-abrir el sobre apenas aparece su sheet (incluido el de
-  // bienvenida): el request corre mientras el invitado tarda en tocar
-  // el sobre animado.
+  // ── carga inicial: crea stubs + perfil + counts, después el Reino ──
   useEffect(() => {
-    if (sheet.type === "pack") prefetchPack(sheet.srcKey);
-  }, [sheet, prefetchPack]);
+    let cancelled = false;
+    void (async () => {
+      const d = await loadAlbum(guestId).catch(() => null);
+      if (cancelled || !d) return;
+      if ("error" in d) {
+        showToast(d.error ?? "Error cargando el álbum");
+        return;
+      }
+      const savedAvatar = d.guest.avatar ? AVATARS.find((a) => a.n === d.guest.avatar) ?? null : null;
+      setCore((s) => {
+        const name = s.name || d.guest.name || "";
+        const avatar = s.avatar || savedAvatar;
+        const selfie = s.selfie || d.guest.selfie || null;
+        const hasLocal = Object.keys(s.counts).length > 0 || s.packsRaw.length > 0;
+        return {
+          ...s,
+          name,
+          avatar,
+          selfie,
+          nroPulsera: d.guest.nroPulsera,
+          mesa: d.guest.mesa,
+          counts: hasLocal ? s.counts : d.album.counts,
+          packsRaw: hasLocal ? s.packsRaw : d.album.packsLeft,
+          screen: s.screen === "intro" && name && (avatar || selfie) ? "app" : s.screen,
+        };
+      });
+      const st = d.album.state as { gift?: number } | undefined;
+      if (st && typeof st.gift === "number" && st.gift > Date.now()) setLocal({ gift: st.gift });
+      hydratedRef.current = true;
+      void refreshReino();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [guestId, showToast, refreshReino]);
 
-  // Sobre de bienvenida: se ofrece cuando el álbum está en pantalla y
-  // el pack "start" sigue pendiente — sin importar si loadAlbum terminó
-  // antes o después de que el invitado tocara "Entrar al Reino".
-  // FIX: welcomeOffered se marca recién cuando el timeout DISPARA.
-  // Antes se marcaba al programarlo: si una dependencia cambiaba dentro
-  // de los 350ms — o React StrictMode re-ejecutaba el efecto en dev —
-  // el cleanup cancelaba el timer y el guard impedía reprogramarlo, y
-  // el sobre de bienvenida no aparecía nunca.
+  // ── realtime: ante cambios en las tablas del Reino, refrescar (debounced
+  //    1.5s para no tormentear con cada apertura de sobre del salón) ──
   useEffect(() => {
-    if (state.screen !== "album") return;
+    const sb = getSupabase();
+    if (!sb) return;
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const bump = () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => void refreshReino(), 1500);
+    };
+    const ch = sb.channel(`figus-reino-${guestId}`);
+    for (const table of REINO_TABLES) {
+      ch.on("postgres_changes", { event: "*", schema: "public", table }, bump);
+    }
+    // mis counts cambian si alguien canjea conmigo → escuchar solo MI fila
+    ch.on(
+      "postgres_changes",
+      { event: "UPDATE", schema: "public", table: "FigusAlbum", filter: `guestId=eq.${guestId}` },
+      bump,
+    );
+    ch.subscribe();
+    return () => {
+      if (t) clearTimeout(t);
+      void sb.removeChannel(ch);
+    };
+  }, [guestId, refreshReino]);
+
+  // ── persistir el contador del sobre regalo ──
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    const t = setTimeout(() => {
+      void saveAlbumState(guestId, { state: { gift: local.gift } });
+    }, 600);
+    return () => clearTimeout(t);
+  }, [local.gift, guestId]);
+
+  // ── tick del contador del sobre regalo ──
+  useEffect(() => {
+    if (!local.gift) return;
+    const i = setInterval(() => setNowTick((n) => n + 1), 1000);
+    return () => clearInterval(i);
+  }, [local.gift]);
+
+  // ── completion diferida: si el álbum se completó mientras había un sheet
+  //    abierto, mostrar el overlay al cerrarse ──
+  useEffect(() => {
+    if (sheet.type === "none" && completionPendingRef.current) {
+      completionPendingRef.current = false;
+      showCompletion(pendingCompletionPrizeRef.current);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sheet.type]);
+
+  // ── sobre de bienvenida ──
+  useEffect(() => {
+    if (core.screen !== "app") return;
     if (welcomeOffered.current) return;
     if (sheet.type !== "none") return;
-    if (!pendingPacks(state.packsRaw).includes("start")) return;
+    if (!pendingPacks(core.packsRaw).includes("start")) return;
     const t = setTimeout(() => {
       welcomeOffered.current = true;
-      setSheet({ type: "pack", srcKey: "start" });
+      setSheet({ type: "pack", token: "start" });
     }, 350);
     return () => clearTimeout(t);
-  }, [state.screen, state.packsRaw, sheet.type]);
+  }, [core.screen, core.packsRaw, sheet.type]);
 
-  const uniques = () =>
-    FIGS.filter((f) => (state.counts[f.id] || 0) > 0).length;
+  useEffect(() => {
+    return () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    };
+  }, []);
 
-  const sources = (() => {
-    const pendientes = pendingPacks(state.packsRaw);
-    const usados = usedPacks(state.packsRaw);
-    const out: string[] = [];
-    for (const k of ["start", "codigo", "trivia", "carta"]) {
-      if (pendientes.includes(k)) out.push(k);
-      else if ((k === "codigo" || k === "trivia") && !usados.includes(k))
-        out.push(k);
-    }
-    return out;
-  })();
+  // ── derivados ──
+  const uniques = FIGS.filter((f) => (core.counts[f.id] || 0) > 0).length;
+  const done = uniques >= 15;
+  const readyTokens = pendingPacks(core.packsRaw).filter((t) => t !== "start");
+  const triviaUsed = usedPacks(core.packsRaw).includes("trivia");
+  const igUsed = usedPacks(core.packsRaw).includes("ig");
+  const cartasFound = core.packsRaw.filter((t) => t === "carta#2" || t === "used:carta").length;
 
-  const handleOpenSource = (srcKey: string) => {
-    if (pendingPacks(state.packsRaw).includes(srcKey)) {
-      setSheet({ type: "pack", srcKey });
-      return;
-    }
-    if (srcKey === "codigo") {
-      setSheet({ type: "codigo-entry" });
-      return;
-    }
-    if (srcKey === "trivia") {
-      void handleStartTrivia();
-      return;
+  // ── tab switch (pull on enter) ──
+  const handleTab = (t: Tab) => {
+    setCore((s) => ({ ...s, tab: t }));
+    if (t === "reino" || t === "prizes" || t === "trade") void refreshReino();
+    if (t === "reino") {
+      setUnread(0);
+      lastSeenRef.current = reino?.feed[0]?.id ?? null;
     }
   };
 
-  const handleOpenEnvelope = async (srcKey: string) => {
+  const afterGain = useCallback(() => {
+    const u = FIGS.filter((f) => (core.counts[f.id] || 0) > 0).length;
+    if (u >= 15) return;
+    const startUsed = usedPacks(core.packsRaw).includes("start");
+    const ig = usedPacks(core.packsRaw).includes("ig");
+    if (readyTokens.length === 0 && startUsed && ig) {
+      showToast("Te quedan huecos… ¡toca cambiar! 🔄");
+    }
+  }, [core.counts, core.packsRaw, readyTokens.length, showToast]);
+
+  const showCompletion = useCallback((prizeNm: string | null) => {
+    if (completionShownRef.current) return;
+    completionShownRef.current = true;
+    setSheet({ type: "completion", prizeNm });
+  }, []);
+
+  // ── abrir sobre ──
+  const resyncAlbum = useCallback(async () => {
+    try {
+      const d = await loadAlbum(guestId);
+      if (d && !("error" in d)) {
+        setCore((s) => ({ ...s, counts: d.album.counts, packsRaw: d.album.packsLeft }));
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [guestId]);
+
+  const handleOpenEnvelope = async (token: string) => {
     if (pending) return;
     setPending(true);
     try {
-      // Si el sheet ya disparó el prefetch, a esta altura la promesa
-      // suele estar resuelta y el await es instantáneo.
-      const cached = packPrefetch.current.get(srcKey);
-      const res = await (cached ?? openPack(guestId, srcKey));
+      const res = await openPack(guestId, token);
       if ("error" in res && res.error) {
         showToast(res.error);
         setSheet({ type: "none" });
+        if (res.error.includes("ya fue abierto")) void resyncAlbum();
         return;
       }
       if (!("drawnIds" in res)) return;
 
-      const prev = { ...state.counts };
+      const prev = { ...core.counts };
       const cards = (res.drawnIds ?? []).map((id) => {
-        const f = FIGS.find((x) => x.id === id)!;
+        const f = fig(id);
         const before = prev[id] || 0;
         prev[id] = before + 1;
         return { f, isNew: before === 0 };
       });
 
-      setState((s) => ({
+      setCore((s) => ({
         ...s,
         counts: res.counts ?? { ...s.counts },
         packsRaw: res.packsLeft ?? s.packsRaw,
@@ -1850,12 +2309,63 @@ export default function Page({ guestId }: { guestId: string }) {
         setSheet({ type: "none" });
         return;
       }
-      setSheet({ type: "pack-reveal", cards, srcKey });
+
+      const goldWon = res.goldWon ?? null;
+      const prizeNm = res.prize ? PRIZE_NM[res.prize] ?? null : null;
+      setSheet({ type: "pack-reveal", cards, token, goldWon, prizeNm });
+      void refreshReino();
     } catch {
       showToast("Error de conexión, probá de nuevo");
     } finally {
-      // Consumido (o fallido): se descarta para que un retry re-pida
-      packPrefetch.current.delete(srcKey);
+      setPending(false);
+    }
+  };
+
+  const handleRevealClose = (goldWon: number | null, prizeNm: string | null) => {
+    setSheet({ type: "none" });
+    if (goldWon != null) {
+      pendingPrizeRef.current = prizeNm;
+      setSheet({ type: "dorada", idx: goldWon });
+      return;
+    }
+    if (prizeNm) {
+      showCompletion(prizeNm);
+      return;
+    }
+    afterGain();
+  };
+
+  const handleDoradaClose = () => {
+    setSheet({ type: "none" });
+    const pn = pendingPrizeRef.current;
+    pendingPrizeRef.current = null;
+    if (pn) showCompletion(pn);
+    else afterGain();
+  };
+
+  // ── sources ──
+  const handleSource = (key: string) => {
+    if (key === "codigo") return setSheet({ type: "codigo-entry" });
+    if (key === "trivia") return void handleStartTrivia();
+    if (key === "ig") return setSheet({ type: "ig" });
+    if (key === "carta") return setSheet({ type: "carta" });
+  };
+
+  const grantAndOpen = async (kind: "carta" | "ig") => {
+    if (pending) return;
+    setPending(true);
+    try {
+      const res = await grantPack(guestId, kind);
+      if (!res.ok) {
+        showToast(res.error);
+        setSheet({ type: "none" });
+        return;
+      }
+      setCore((s) => ({ ...s, packsRaw: res.packsLeft }));
+      setSheet({ type: "pack", token: res.token });
+    } catch {
+      showToast("Error de conexión, probá de nuevo");
+    } finally {
       setPending(false);
     }
   };
@@ -1864,19 +2374,14 @@ export default function Page({ guestId }: { guestId: string }) {
     if (pending) return;
     setPending(true);
     try {
-      const res = await checkCodigo(guestId, code);
+      const res = await redeemCodigo(guestId, code);
       if (!res.valid) {
         showToast(res.error ?? "Código incorrecto");
         return;
       }
-      // El server ya agregó "codigo" a packsLeft — reflejarlo localmente
-      setState((s) => ({
-        ...s,
-        packsRaw: pendingPacks(s.packsRaw).includes("codigo")
-          ? s.packsRaw
-          : [...s.packsRaw, "codigo"],
-      }));
-      setSheet({ type: "pack", srcKey: "codigo" });
+      const token = `codigo#${res.value}`;
+      setCore((s) => ({ ...s, packsRaw: res.packsLeft }));
+      setSheet({ type: "pack", token });
     } catch {
       showToast("Error de conexión, probá de nuevo");
     } finally {
@@ -1906,11 +2411,7 @@ export default function Page({ guestId }: { guestId: string }) {
       }
       setSheet({
         type: "trivia",
-        trivia: {
-          id: res.trivia.id,
-          question: res.trivia.question,
-          options: res.trivia.options as string[],
-        },
+        trivia: { id: res.trivia.id, question: res.trivia.question, options: res.trivia.options },
       });
     } catch {
       showToast("Error de conexión, probá de nuevo");
@@ -1929,14 +2430,8 @@ export default function Page({ guestId }: { guestId: string }) {
         setSheet({ type: "none" });
         return;
       }
-      // El server ya agregó "trivia" a packsLeft — reflejarlo localmente
-      setState((s) => ({
-        ...s,
-        packsRaw: pendingPacks(s.packsRaw).includes("trivia")
-          ? s.packsRaw
-          : [...s.packsRaw, "trivia"],
-      }));
-      setSheet({ type: "pack", srcKey: "trivia" });
+      setCore((s) => ({ ...s, packsRaw: res.packsLeft }));
+      setSheet({ type: "pack", token: "trivia" });
     } catch {
       showToast("Error de conexión, probá de nuevo");
     } finally {
@@ -1944,83 +2439,148 @@ export default function Page({ guestId }: { guestId: string }) {
     }
   };
 
-  const handleRevealClose = () => {
+  // ── cambios reales ──
+  const handlePubRequest = () => setSheet({ type: "pick-request" });
+
+  const handlePickRequest = async (figId: number) => {
     setSheet({ type: "none" });
-    const u = uniques();
-    if (u >= 15) {
-      setState((s) => ({ ...s, screen: "done" }));
+    if (pending) return;
+    setPending(true);
+    try {
+      const res = await publishRequest(guestId, figId);
+      if (!res.ok) {
+        showToast(res.error);
+        return;
+      }
+      showToast("Tu pedido salió al Reino 🙋");
+      await refreshReino();
+    } catch {
+      showToast("Error de conexión, probá de nuevo");
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const handleCancelRequest = async () => {
+    if (pending) return;
+    setPending(true);
+    try {
+      await cancelRequest(guestId);
+      await refreshReino();
+    } catch {
+      showToast("Error de conexión, probá de nuevo");
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const handleFulfill = async (requestId: string) => {
+    if (pending) return;
+    setPending(true);
+    try {
+      const res = await fulfillRequest(guestId, requestId);
+      await refreshReino();
+      if (!res.ok) {
+        showToast(res.error);
+        return;
+      }
+      const got = res.gotFigId != null ? fig(res.gotFigId) : null;
+      showToast(
+        got
+          ? `Le pasaste una figu a ${res.requesterName} y te llevaste ${got.nm} 🤝`
+          : `Le diste una mano a ${res.requesterName} 🤍`,
+      );
+      if (res.prize) showCompletion(PRIZE_NM[res.prize] ?? null);
+    } catch {
+      showToast("Error de conexión, probá de nuevo");
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const handleConnect = async (code: string) => {
+    if (pending) return;
+    const clean = code.trim();
+    if (!/^\d{4,5}$/.test(clean)) {
+      showToast("Tipeá el código de la otra persona");
       return;
     }
-    if (sources.length === 0) {
-      showToast("Te quedan huecos… ¡toca cambiar! 🔄");
+    setPending(true);
+    try {
+      const res = await connectByCode(guestId, clean);
+      if (!res.ok) {
+        showToast(res.error);
+        return;
+      }
+      await refreshReino();
+      pendingPrizeRef.current = res.prize ? PRIZE_NM[res.prize] ?? null : null;
+      setSheet({ type: "code-result", otherName: res.otherName, gave: res.gave, got: res.got });
+    } catch {
+      showToast("Error de conexión, probá de nuevo");
+    } finally {
+      setPending(false);
     }
   };
 
-  const handleOpenTrade = () => setSheet({ type: "trade-code" });
-  const handleConnectCode = () => setSheet({ type: "trade-propose" });
+  // ── sobre regalo ──
+  const handleSimGift = () => {
+    const giftPending = pendingPacks(core.packsRaw).some((t) => parseToken(t).key === "gift");
+    if (local.gift || giftPending) {
+      showToast("Ya tenés un sobre regalo en camino 🎁");
+      return;
+    }
+    setLocal({ gift: Date.now() + 180000 });
+    showToast("Mirá el contador acá abajo 👇");
+  };
 
-  const handleAcceptSwap = (giveId: number, wantId: number) => {
-    // FIX: el cálculo de faltantes se hace sobre los counts NUEVOS
-    // (antes ignoraba la figu entregada y usaba un closure viejo).
-    const c = { ...state.counts };
-    c[giveId] = Math.max(0, (c[giveId] || 0) - 1);
-    c[wantId] = (c[wantId] || 0) + 1;
-    const missing = FIGS.filter((f) => (c[f.id] || 0) === 0).length;
-
-    setState((s) => ({
-      ...s,
-      counts: c,
-      guestIdx: s.guestIdx + 1,
-      screen: missing === 0 ? "done" : s.screen,
-    }));
-    setSheet({ type: "none" });
-
-    const want = FIGS.find((f) => f.id === wantId);
-    if (missing > 0 && want) {
-      showToast(`¡Conseguiste ${want.nm}! Te faltan ${missing} 🔄`);
+  const handleGiftOpen = async () => {
+    if (pending) return;
+    setPending(true);
+    try {
+      const res = await grantPack(guestId, "gift");
+      if (!res.ok) {
+        setLocal({ gift: null });
+        showToast(res.error);
+        return;
+      }
+      setLocal({ gift: null });
+      setCore((s) => ({ ...s, packsRaw: res.packsLeft }));
+      setSheet({ type: "pack", token: res.token });
+    } catch {
+      showToast("Error de conexión, probá de nuevo");
+    } finally {
+      setPending(false);
     }
   };
 
-  const handleSkipSwap = () => {
-    setState((s) => ({ ...s, guestIdx: s.guestIdx + 1 }));
-    setSheet({ type: "trade-propose" });
-  };
-
-  const handleEnterAlbum = async (nombre: string, av: Avatar) => {
-    setState((s) => ({
-      ...s,
-      name: nombre,
-      avatar: av,
-      screen: "album",
-    }));
-    const res = await saveGuestProfile(guestId, nombre, av.n);
+  // ── perfil ──
+  const handleEnterAlbum = async (nombre: string, av: Avatar | null, selfie: string | null) => {
+    setCore((s) => ({ ...s, name: nombre, avatar: av, selfie, screen: "app", tab: "album" }));
+    const res = await saveGuestProfile(guestId, nombre, av?.n ?? "", selfie);
     if (!res.ok) showToast(res.error);
+    void refreshReino();
   };
 
-  const handleReset = () => {
-    welcomeOffered.current = false;
-    packPrefetch.current.clear();
-    setState({
-      screen: "intro",
-      name: "",
-      avatar: null,
-      counts: {},
-      packsRaw: [],
-      guestIdx: 0,
-    });
-    setSheet({ type: "none" });
-    loadAlbum(guestId)
-      .then(setAlbumData)
-      .catch(() => showToast("Error cargando el álbum"));
-  };
+  const handleEditProfile = () => setCore((s) => ({ ...s, screen: "intro" }));
+
+  // ── gift bar display ──
+  const giftDisplay = (() => {
+    void nowTick;
+    if (!local.gift) return null;
+    const left = local.gift - Date.now();
+    if (left <= 0) return { ready: true, text: "🎁 ¡Tu sobre llegó! Tocá para abrirlo" };
+    const m = Math.floor(left / 60000);
+    const s = Math.floor((left % 60000) / 1000);
+    return { ready: false, text: `🎁 Sobre de regalo en ${m}:${String(s).padStart(2, "0")}` };
+  })();
+
+  const sheetOn = sheet.type !== "none";
+  const inApp = core.screen === "app";
 
   const handleIntroComplete = useCallback(() => {
     introPlayed.current = true;
     setIntroPlaying(false);
   }, []);
-
-  const sheetOn = sheet.type !== "none";
-  const showBar = state.screen === "album";
 
   if (introPlaying && !introPlayed.current) {
     return <MagicMIntro onComplete={handleIntroComplete} />;
@@ -2031,48 +2591,110 @@ export default function Page({ guestId }: { guestId: string }) {
       <Starfield />
       <Castle />
 
-      {showBar && (
-        <Topbar name={state.name} avatar={state.avatar} uniques={uniques()} />
+      {inApp && (
+        <Topbar name={core.name} avatar={core.avatar} selfie={core.selfie} uniques={uniques} />
       )}
 
       <div className="fk-scroll">
-        {state.screen === "intro" && (
+        {core.screen === "intro" && (
           <IntroScreen
-            name={state.name}
-            avatar={state.avatar}
-            onAvatarSelect={(a) => setState((s) => ({ ...s, avatar: a }))}
-            onEnter={(nombre, av) => void handleEnterAlbum(nombre, av)}
+            name={core.name}
+            avatar={core.avatar}
+            selfie={core.selfie}
+            onAvatarSelect={(a) => setCore((s) => ({ ...s, avatar: a, selfie: null }))}
+            onSelfie={(dataUrl) => setCore((s) => ({ ...s, selfie: dataUrl, avatar: dataUrl ? null : s.avatar }))}
+            onEnter={(nombre, av, selfie) => void handleEnterAlbum(nombre, av, selfie)}
             onToast={showToast}
           />
         )}
-        {state.screen === "album" && (
+
+        {inApp && core.tab === "album" && (
           <AlbumScreen
-            counts={state.counts}
-            sources={sources}
-            onOpenSource={handleOpenSource}
-            onOpenTrade={handleOpenTrade}
+            counts={core.counts}
+            golds={reino?.golds ?? []}
+            done={done}
+            readyTokens={readyTokens}
+            cartasFound={cartasFound}
+            igUsed={igUsed}
+            triviaUsed={triviaUsed}
+            onOpenToken={(token) => setSheet({ type: "pack", token })}
+            onSource={handleSource}
+            onOpenTrade={() => handleTab("trade")}
           />
         )}
-        {state.screen === "done" && (
-          <div className="fk-pad">
-            <DoneScreen name={state.name} onReset={handleReset} />
-          </div>
+
+        {inApp && core.tab === "trade" && (
+          <TradeScreen
+            counts={core.counts}
+            done={done}
+            busy={pending}
+            myRequest={reino?.myRequest ?? null}
+            salonRequests={reino?.salonRequests ?? []}
+            tradeCode={reino?.tradeCode ?? ""}
+            onPubRequest={handlePubRequest}
+            onCancelRequest={() => void handleCancelRequest()}
+            onFulfill={(id) => void handleFulfill(id)}
+            onConnect={(code) => void handleConnect(code)}
+          />
+        )}
+
+        {inApp && core.tab === "prizes" && (
+          <PrizesScreen
+            prizes={reino?.prizes ?? []}
+            colgantesLeft={reino?.colgantesLeft ?? SEC_TOTAL}
+            myColgantes={reino?.myColgantes ?? 0}
+            doraLog={reino?.doraLog ?? []}
+          />
+        )}
+
+        {inApp && core.tab === "reino" && (
+          <ReinoScreen
+            feed={reino?.feed ?? []}
+            top={reino?.top ?? []}
+            onSync={() => {
+              void refreshReino();
+              showToast("Reino actualizado ✨");
+            }}
+          />
+        )}
+
+        {inApp && core.tab === "account" && (
+          <AccountScreen
+            name={core.name}
+            avatar={core.avatar}
+            selfie={core.selfie}
+            nroPulsera={core.nroPulsera}
+            mesa={core.mesa}
+            counts={core.counts}
+            doradas={reino?.golds.filter((g) => g.mine).length ?? 0}
+            colgantes={reino?.myColgantes ?? 0}
+            tradeCode={reino?.tradeCode ?? ""}
+            onEdit={handleEditProfile}
+            onSimGift={handleSimGift}
+          />
         )}
       </div>
 
-      {/* FIX: clase "on" iba pegada sin espacio ("fk-sheeton"), el div
-          quedaba sin estilos y se renderizaba en el flujo normal debajo
-          del álbum — exactamente lo que mostraba la captura. */}
+      {inApp && giftDisplay && !sheetOn && (
+        <div
+          className={`fk-giftbar${giftDisplay.ready ? " ready" : ""}`}
+          onClick={() => giftDisplay.ready && void handleGiftOpen()}
+        >
+          {giftDisplay.text}
+        </div>
+      )}
+
+      {inApp && !sheetOn && <Nav tab={core.tab} unread={unread} onTab={handleTab} />}
+
       <div className={`fk-sheet${sheetOn ? " on" : ""}`}>
         {sheet.type === "pack" && (
-          <PackSheet
-            srcKey={sheet.srcKey}
-            busy={pending}
-            onOpen={() => void handleOpenEnvelope(sheet.srcKey)}
-          />
+          <PackSheet token={sheet.token} busy={pending} onOpen={() => void handleOpenEnvelope(sheet.token)} />
         )}
         {sheet.type === "pack-reveal" && (
-          <PackRevealSheet cards={sheet.cards} onClose={handleRevealClose} />
+          <PackRevealSheet
+            cards={sheet.cards}
+            onClose={() => handleRevealClose(sheet.goldWon, sheet.prizeNm)}
+          />
         )}
         {sheet.type === "codigo-entry" && (
           <CodigoEntrySheet
@@ -2090,20 +2712,48 @@ export default function Page({ guestId }: { guestId: string }) {
             onClose={() => setSheet({ type: "none" })}
           />
         )}
-        {sheet.type === "trade-code" && (
-          <TradeCodeSheet
-            onConnect={handleConnectCode}
+        {sheet.type === "ig" && (
+          <IgSheet busy={pending} onOk={() => void grantAndOpen("ig")} onClose={() => setSheet({ type: "none" })} />
+        )}
+        {sheet.type === "carta" && (
+          <CartaSheet
+            busy={pending}
+            cartasFound={cartasFound}
+            onOk={() => void grantAndOpen("carta")}
             onClose={() => setSheet({ type: "none" })}
-            onToast={showToast}
           />
         )}
-        {sheet.type === "trade-propose" && (
-          <TradeProposeSheet
-            counts={state.counts}
-            guestIdx={state.guestIdx}
-            onAccept={handleAcceptSwap}
-            onSkip={handleSkipSwap}
+        {sheet.type === "dorada" && <DoradaOverlay idx={sheet.idx} onClose={handleDoradaClose} />}
+        {sheet.type === "completion" && (
+          <CompletionOverlay
+            name={core.name}
+            avatar={core.avatar}
+            selfie={core.selfie}
+            prizeNm={sheet.prizeNm}
+            onStay={() => {
+              setSheet({ type: "none" });
+              handleTab("reino");
+            }}
+          />
+        )}
+        {sheet.type === "pick-request" && (
+          <PickRequestSheet
+            counts={core.counts}
+            onPick={(id) => void handlePickRequest(id)}
             onClose={() => setSheet({ type: "none" })}
+          />
+        )}
+        {sheet.type === "code-result" && (
+          <CodeResultSheet
+            otherName={sheet.otherName}
+            gave={sheet.gave}
+            got={sheet.got}
+            onClose={() => {
+              setSheet({ type: "none" });
+              const pn = pendingPrizeRef.current;
+              pendingPrizeRef.current = null;
+              if (pn) showCompletion(pn);
+            }}
           />
         )}
       </div>

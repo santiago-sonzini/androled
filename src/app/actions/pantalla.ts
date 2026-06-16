@@ -32,6 +32,7 @@ export interface PantallaPlayer {
   id: string
   name: string
   avatar: string | null
+  selfie: string | null
   uniques: number
   /** Primera figu que le falta (id 1-15) — para los "le falta X" del top */
   missingId: number | null
@@ -136,6 +137,7 @@ export async function lanzarTrivia(
 
 export async function lanzarCodigo(
   durationSeconds: number = DEFAULT_CODIGO_SECONDS,
+  value = 4,
 ): Promise<LaunchResult> {
   try {
     await db.figusCodigo.updateMany({
@@ -143,18 +145,29 @@ export async function lanzarCodigo(
       data: { active: false },
     })
 
-    const code = CODE_WORDS[Math.floor(Math.random() * CODE_WORDS.length)]!
+    // Evitar repetir una palabra ya lanzada: un código repetido sería una
+    // fila nueva con usedBy vacío, dejando re-canjear a quien ya lo usó.
+    const previas = await db.figusCodigo.findMany({
+      where: { eventId: EVENT_ID },
+      select: { code: true },
+    })
+    const usadas = new Set(previas.map((c) => c.code))
+    const pool = CODE_WORDS.filter((c) => !usadas.has(c))
+    const banco = pool.length ? pool : CODE_WORDS
+    const code = banco[Math.floor(Math.random() * banco.length)]!
+    const figus = Math.min(10, Math.max(1, Math.round(value) || 4))
 
     await db.figusCodigo.create({
       data: {
         eventId: EVENT_ID,
         code,
+        value: figus,
         active: true,
         activeAt: new Date(),
         durationSeconds,
       },
     })
-    return { ok: true, label: code }
+    return { ok: true, label: `${code} (+${figus})` }
   } catch (err) {
     console.error("[lanzarCodigo]", err)
     return { ok: false, error: "No se pudo lanzar el código" }
@@ -169,7 +182,7 @@ export async function loadPantalla(): Promise<PantallaData> {
       select: {
         guestId: true,
         counts: true,
-        guest: { select: { name: true, avatar: true } },
+        guest: { select: { name: true, avatar: true, selfie: true } },
       },
     }),
     db.figusCardStock.findMany({
@@ -201,6 +214,7 @@ export async function loadPantalla(): Promise<PantallaData> {
       id: a.guestId,
       name: (a.guest.name || "").trim() || "Invitado/a",
       avatar: a.guest.avatar,
+      selfie: a.guest.selfie,
       uniques,
       missingId,
     }
@@ -313,12 +327,15 @@ export async function createTrivia(input: {
 export async function createCodigo(input: {
   code: string
   durationSeconds: number
+  /** Figus que entrega el sobre (sobres por entrevista). Default 4. */
+  value?: number
 }): Promise<ActionResult> {
   const code = input.code.trim().toUpperCase()
   const durationSeconds = Math.min(
     MAX_DURATION,
     Math.max(MIN_DURATION, Math.round(input.durationSeconds) || 0),
   )
+  const value = Math.min(10, Math.max(1, Math.round(input.value ?? 4) || 4))
 
   if (!code) return { ok: false, error: "Falta el código" }
   if (code.length > 12) return { ok: false, error: "Máximo 12 caracteres" }
@@ -333,6 +350,7 @@ export async function createCodigo(input: {
         data: {
           eventId: EVENT_ID,
           code,
+          value,
           active: true,
           activeAt: new Date(),
           durationSeconds,

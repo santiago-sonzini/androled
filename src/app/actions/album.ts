@@ -2,6 +2,25 @@
 
 import { db } from "@/server/db"
 import { revalidatePath } from "next/cache"
+import {
+  logEvent,
+  esc,
+  claimCompletion,
+  serializable,
+  GOLD_META,
+  PRIZE_META,
+} from "@/server/figus"
+
+// Probabilidad de dorada por tipo de sobre. Acotada por el stock global
+// (3 cartas): una vez reclamadas, no salen más aunque el roll pegue.
+const DOR_BY_KEY: Record<string, number> = {
+  start: 0.05,
+  codigo: 0.06,
+  carta: 0.08,
+  gift: 0.06,
+  trivia: 0.06,
+  ig: 0,
+}
 
 type Rarity = "comun" | "rara" | "epica" | "m"
 
@@ -31,19 +50,51 @@ const FIGS: Fig[] = [
 const WEIGHTS: Record<Rarity, number> = { comun: 10, rara: 4, epica: 1, m: 10 }
 
 // ─────────────────────────────────────────────
-// PACKS — convención de estado dentro de packsLeft
+// PACKS — tokens dentro de packsLeft
 //
-//   "start"        → sobre pendiente (se puede abrir)
-//   "used:start"   → sobre ya abierto (no vuelve a ofrecerse)
+// Cada sobre pendiente es un token. Puede llevar un valor opcional
+// con "#" para sobres de tamaño variable (sobres por entrevista):
 //
-// Así el estado "ya usado" persiste en DB y sobrevive
-// refresh / cambio de dispositivo (la pulsera es la sesión).
+//   "start"      → bienvenida (6 figus)
+//   "trivia"     → ganar la trivia (4 figus)
+//   "codigo#5"   → código de entrevista que vale +5
+//   "carta#2"    → sobre escondido encontrado (+2)
+//   "gift#4"     → sobre regalo del Reino (+4)
+//   "ig#1"       → seguir a Instagram (+1)
+//   "used:start" → sobre de una sola vez ya abierto
+//
+// Así el estado persiste en DB y sobrevive refresh / cambio de
+// dispositivo (la pulsera es la sesión).
 // ─────────────────────────────────────────────
 
 const USED_PREFIX = "used:"
 
-function isPending(packsLeft: string[], key: string) {
-  return packsLeft.includes(key)
+// Tamaño por defecto de cada tipo de sobre cuando el token no trae "#valor".
+const PACK_DEFAULT: Record<string, number> = {
+  start: 6,
+  trivia: 4,
+  codigo: 4,
+  carta: 2,
+  gift: 4,
+  ig: 1,
+}
+
+// Sobres de una sola vez: al abrirse se marcan "used:<key>" para no
+// volver a ofrecerse. El resto (codigo/carta/gift) son repetibles.
+const ONE_TIME = new Set(["start", "trivia", "ig"])
+
+// Tope de sobres escondidos por invitado (espejo de CARTAS_MAX en el cliente).
+const MAX_CARTAS = 3
+
+function parseToken(token: string): { key: string; n: number } {
+  const [key, raw] = token.split("#")
+  const val = raw ? parseInt(raw, 10) : NaN
+  const n = Number.isFinite(val) && val > 0 ? val : PACK_DEFAULT[key ?? ""] ?? 4
+  return { key: key ?? "", n }
+}
+
+function isPending(packsLeft: string[], token: string) {
+  return packsLeft.includes(token)
 }
 
 function wasUsed(packsLeft: string[], key: string) {
@@ -55,15 +106,22 @@ function parseCounts(counts: unknown): Record<number, number> {
   return counts as Record<number, number>
 }
 
+function parseState(state: unknown): Record<string, unknown> {
+  if (!state || typeof state !== "object") return {}
+  return state as Record<string, unknown>
+}
+
 // eventId hardcodeado — ya no viene del guest
 const EVENT_ID = process.env.FIGUS_EVENT_ID ?? ""
 
-// FIX PERFORMANCE: antes drawCard hacía un findMany de stock por
-// CADA carta y un updateMany por CADA carta — abrir un sobre de 5
-// eran ~11 round trips secuenciales a la DB (varios segundos con una
-// DB remota). Ahora el stock se lee UNA vez, el sorteo es en memoria
-// descontando capacidad, y los increments van agrupados en una sola
-// transacción junto con el update del álbum.
+// ─────────────────────────────────────────────
+// SORTEO + PITY
+//
+// El stock se lee UNA vez y el sorteo descuenta capacidad en memoria.
+// La regla "pity" garantiza un mínimo de figus nuevas mientras el
+// álbum arranca: nunca un sobre 100% repetidas (las épicas quedan
+// afuera del relleno — son el muro que obliga a cambiar).
+// ─────────────────────────────────────────────
 
 function drawCards(
   n: number,
@@ -92,14 +150,35 @@ function drawCards(
   return drawn
 }
 
+function applyPity(
+  draws: number[],
+  minNew: number,
+  counts: Record<number, number>,
+): number[] {
+  const owned = (id: number) => (counts[id] || 0) > 0
+  const isNewInPack = (id: number, i: number) =>
+    !owned(id) && draws.indexOf(id) === i
+  let newCount = draws.filter((id, i) => isNewInPack(id, i)).length
+  const cands = FIGS.filter(
+    (f) => !owned(f.id) && f.r !== "epica" && !draws.includes(f.id),
+  ).map((f) => f.id)
+  while (newCount < minNew && cands.length) {
+    const i = draws.findIndex((id, k) => !isNewInPack(id, k))
+    if (i < 0) break
+    const swap = cands.splice(Math.floor(Math.random() * cands.length), 1)[0]
+    if (swap === undefined) break
+    draws[i] = swap
+    newCount++
+  }
+  return draws
+}
+
 // ─────────────────────────────────────────────
 // LOAD ALBUM
 //
-// FIX: antes devolvía "Invitado no encontrado" para un guestId
-// nuevo, entonces el álbum nunca se creaba, packsLeft quedaba
-// vacío y el sobre de bienvenida jamás aparecía. Ahora el guest
-// se crea como stub si no existe (el perfil se completa en la
-// intro vía saveGuestProfile) y el álbum nace con ["start"].
+// Crea el guest stub y el álbum con ["start"] si no existen. Devuelve
+// counts, packsLeft y el blob `state` (Reino/premios/doradas/trade)
+// para que el cliente hidrate el juego donde lo dejó.
 // ─────────────────────────────────────────────
 
 export async function loadAlbum(guestId: string) {
@@ -109,7 +188,7 @@ export async function loadAlbum(guestId: string) {
     where: { id: guestId },
     update: {},
     create: { id: guestId, name: "", avatar: "" },
-    select: { id: true, name: true, mesa: true, nroPulsera: true, avatar: true },
+    select: { id: true, name: true, mesa: true, nroPulsera: true, avatar: true, selfie: true },
   })
 
   let album = await db.figusAlbum.findUnique({ where: { guestId } })
@@ -120,6 +199,7 @@ export async function loadAlbum(guestId: string) {
         guestId,
         counts: {},
         packsLeft: ["start"],
+        state: {},
       },
     })
   }
@@ -131,11 +211,13 @@ export async function loadAlbum(guestId: string) {
       mesa: guest.mesa,
       nroPulsera: guest.nroPulsera,
       avatar: guest.avatar,
+      selfie: guest.selfie,
     },
     album: {
       id: album.id,
       counts: parseCounts(album.counts),
       packsLeft: album.packsLeft,
+      state: parseState(album.state),
     },
   }
 }
@@ -143,72 +225,217 @@ export async function loadAlbum(guestId: string) {
 // ─────────────────────────────────────────────
 // OPEN PACK
 //
-// FIX: al abrir, el srcKey ahora se marca como "used:srcKey" en
-// vez de simplemente desaparecer, para poder distinguir "todavía
-// no disponible" de "ya abierto" en cargas posteriores.
+// Abre el sobre del token exacto (incluido su tamaño variable). Aplica
+// pity, descuenta stock y persiste counts. El server también decide la
+// dorada (stock global atómico), registra el evento del feed y reclama el
+// premio si el álbum se completa.
 // ─────────────────────────────────────────────
 
-export async function openPack(guestId: string, srcKey: string) {
-  const album = await db.figusAlbum.findUnique({ where: { guestId } })
-  if (!album) return { error: "Álbum no encontrado" }
-
-  if (!isPending(album.packsLeft, srcKey)) {
-    return {
-      error: wasUsed(album.packsLeft, srcKey)
-        ? "Este sobre ya fue abierto"
-        : "Este sobre todavía no está disponible",
-    }
-  }
-
-  const n = srcKey === "start" ? 5 : 4
-  const counts = parseCounts(album.counts)
-
-  const stocks = await db.figusCardStock.findMany({
-    where: { eventId: EVENT_ID },
-    select: { cardId: true, issued: true, maxCount: true },
+export async function openPack(guestId: string, token: string) {
+  const meta = await db.figusAlbum.findUnique({
+    where: { guestId },
+    select: { guest: { select: { name: true } } },
   })
+  if (!meta) return { error: "Álbum no encontrado" }
+  const name = (meta.guest.name || "").trim() || "Invitado/a"
+  const { key, n } = parseToken(token)
 
-  const drawnIds = drawCards(n, stocks)
-  for (const cardId of drawnIds) {
-    counts[cardId] = (counts[cardId] || 0) + 1
-  }
+  // TODO se hace dentro de una transacción Serializable (con retry): la
+  // validación del token, el sorteo, el descuento de stock, la dorada y el
+  // premio. Así dos aperturas/cambios concurrentes sobre el mismo álbum no
+  // se pisan (counts es un blob JSON, no un increment atómico).
+  const out = await serializable(async (tx) => {
+    const album = await tx.figusAlbum.findUnique({
+      where: { guestId },
+      select: { counts: true, packsLeft: true },
+    })
+    if (!album) return { error: "Álbum no encontrado" }
+    if (!isPending(album.packsLeft, token)) {
+      return {
+        error: wasUsed(album.packsLeft, key)
+          ? "Este sobre ya fue abierto"
+          : "Este sobre todavía no está disponible",
+      }
+    }
 
-  // Increments agrupados por carta (una repetida x2 = un solo update)
-  const grouped = new Map<number, number>()
-  for (const cardId of drawnIds) {
-    grouped.set(cardId, (grouped.get(cardId) ?? 0) + 1)
-  }
+    const before = parseCounts(album.counts)
+    const counts = parseCounts(album.counts)
 
-  const newPacksLeft = [
-    ...album.packsLeft.filter((k) => k !== srcKey),
-    USED_PREFIX + srcKey,
-  ]
+    const stocks = await tx.figusCardStock.findMany({
+      where: { eventId: EVENT_ID },
+      select: { cardId: true, issued: true, maxCount: true },
+    })
 
-  await db.$transaction([
-    ...[...grouped.entries()].map(([cardId, qty]) =>
-      db.figusCardStock.updateMany({
+    const uniques = FIGS.filter((f) => (counts[f.id] || 0) > 0).length
+    const minNew = Math.min(n, key === "start" ? 3 : uniques < 10 ? 1 : 0)
+    const drawnIds = applyPity(drawCards(n, stocks), minNew, counts)
+
+    for (const cardId of drawnIds) counts[cardId] = (counts[cardId] || 0) + 1
+
+    const grouped = new Map<number, number>()
+    for (const cardId of drawnIds) grouped.set(cardId, (grouped.get(cardId) ?? 0) + 1)
+    for (const [cardId, qty] of grouped) {
+      await tx.figusCardStock.updateMany({
         where: { eventId: EVENT_ID, cardId },
         data: { issued: { increment: qty } },
-      }),
-    ),
-    db.figusAlbum.update({
+      })
+    }
+
+    // Quita UNA sola ocurrencia del token; los de una sola vez dejan "used:".
+    const at = album.packsLeft.indexOf(token)
+    const newPacksLeft =
+      at < 0
+        ? [...album.packsLeft]
+        : [...album.packsLeft.slice(0, at), ...album.packsLeft.slice(at + 1)]
+    if (ONE_TIME.has(key)) {
+      if (!newPacksLeft.includes(USED_PREFIX + key)) newPacksLeft.push(USED_PREFIX + key)
+    } else if (key === "carta") {
+      newPacksLeft.push(USED_PREFIX + "carta")
+    }
+
+    await tx.figusAlbum.update({
       where: { guestId },
       data: { counts, packsLeft: newPacksLeft },
-    }),
-  ])
+    })
 
-  revalidatePath(`/juego/${guestId}`)
+    // Dorada: roll + claim atómico de una carta dorada del stock global.
+    let goldWon: number | null = null
+    const dor = DOR_BY_KEY[key] ?? 0.06
+    if (Math.random() < dor) {
+      const gold = await tx.figusGold.findFirst({
+        where: { eventId: EVENT_ID, winnerId: null },
+        orderBy: { goldIdx: "asc" },
+      })
+      if (gold) {
+        const claim = await tx.figusGold.updateMany({
+          where: { id: gold.id, winnerId: null },
+          data: { winnerId: guestId, winnerName: name, wonAt: new Date() },
+        })
+        if (claim.count > 0) goldWon = gold.goldIdx
+      }
+    }
 
-  return { drawnIds, counts, packsLeft: newPacksLeft }
+    const prize = await claimCompletion(tx, guestId, name, counts)
+    const newCount = drawnIds.filter(
+      (id, i) => (before[id] || 0) === 0 && drawnIds.indexOf(id) === i,
+    ).length
+
+    return { drawnIds, counts, packsLeft: newPacksLeft, goldWon, prize, newCount }
+  })
+
+  if ("error" in out) return { error: out.error }
+
+  // Eventos del feed (best-effort, fuera de la transacción).
+  const rep = out.drawnIds.length - out.newCount
+  await logEvent(
+    "🎁",
+    `<b>${esc(name)}</b> abrió un sobre — <span class="g">${out.newCount} nueva${out.newCount === 1 ? "" : "s"}</span>, ${rep} repetida${rep === 1 ? "" : "s"}`,
+    guestId,
+  )
+  if (out.goldWon != null) {
+    const gm = GOLD_META[out.goldWon]
+    await logEvent(
+      "✨",
+      `<span class="r">¡${esc(name)} sacó una dorada!</span> ${gm?.nm ?? "Dorada"} ${gm?.g ?? "✨"} — colgante RGB 📿`,
+      guestId,
+    )
+  }
+  if (out.prize) {
+    const pm = PRIZE_META[out.prize]
+    await logEvent(
+      "🎆",
+      `<b>${esc(name)}</b> completó el Reino 👑${pm ? ` — ¡ganó ${pm.nm}!` : ""}`,
+      guestId,
+    )
+  }
+
+  revalidatePath(`/${guestId}`)
+
+  return {
+    drawnIds: out.drawnIds,
+    counts: out.counts,
+    packsLeft: out.packsLeft,
+    goldWon: out.goldWon,
+    prize: out.prize,
+  }
+}
+
+// ─────────────────────────────────────────────
+// GRANT PACK (sobres honor-system: carta escondida, regalo, instagram)
+//
+// Agrega un token a packsLeft. No valida contra backend (son sobres
+// que el invitado "encuentra" o que dispara el Reino); el cliente
+// limita carta a 3 e instagram a 1 vía el estado.
+// ─────────────────────────────────────────────
+
+const GRANTABLE: Record<string, string> = {
+  carta: "carta#2",
+  gift: "gift#4",
+  ig: "ig#1",
+}
+
+export async function grantPack(guestId: string, kind: "carta" | "gift" | "ig") {
+  const token = GRANTABLE[kind]
+  if (!token) return { ok: false as const, error: "Sobre desconocido" }
+
+  const album = await db.figusAlbum.findUnique({
+    where: { guestId },
+    select: { packsLeft: true },
+  })
+  if (!album) return { ok: false as const, error: "Álbum no encontrado" }
+
+  // Topes server-side (el cliente también limita en UI, pero acá es la
+  // fuente de verdad para no acuñar sobres infinitos y vaciar el stock).
+  if (kind === "ig" && (album.packsLeft.includes(token) || wasUsed(album.packsLeft, "ig"))) {
+    return { ok: false as const, error: "Ya tenés tu sobre de Instagram" }
+  }
+  if (kind === "carta") {
+    // cartas otorgadas = pendientes (carta#2) + abiertas (marca used:carta)
+    const granted = album.packsLeft.filter(
+      (t) => t === "carta#2" || t === USED_PREFIX + "carta",
+    ).length
+    if (granted >= MAX_CARTAS) {
+      return { ok: false as const, error: "Ya encontraste todos los sobres escondidos" }
+    }
+  }
+  if (kind === "gift" && album.packsLeft.some((t) => parseToken(t).key === "gift")) {
+    return { ok: false as const, error: "Ya tenés un sobre regalo en camino" }
+  }
+
+  const updated = await db.figusAlbum.update({
+    where: { guestId },
+    data: { packsLeft: { push: token } },
+    select: { packsLeft: true },
+  })
+
+  revalidatePath(`/${guestId}`)
+  return { ok: true as const, token, packsLeft: updated.packsLeft }
+}
+
+// ─────────────────────────────────────────────
+// SAVE ALBUM STATE
+//
+// Persiste el estado local del jugador (sobre regalo en camino). El Reino
+// real (feed/premios/doradas/cambios) vive en sus propias tablas.
+// ─────────────────────────────────────────────
+
+export async function saveAlbumState(
+  guestId: string,
+  payload: { state?: Record<string, unknown> },
+) {
+  try {
+    if (!payload.state) return { ok: true as const }
+    const state: object = payload.state
+    await db.figusAlbum.update({ where: { guestId }, data: { state } })
+    return { ok: true as const }
+  } catch (err) {
+    console.error("[saveAlbumState]", err)
+    return { ok: false as const, error: "No se pudo guardar el progreso" }
+  }
 }
 
 // ─────────────────────────────────────────────
 // CHECK TRIVIA
-//
-// FIX: antes exigía que "trivia" YA estuviera en packsLeft para
-// considerarla disponible (pero nada la agregaba nunca), así que
-// siempre devolvía "already_used". Ahora la disponibilidad se
-// evalúa contra la marca "used:trivia".
 // ─────────────────────────────────────────────
 
 export async function checkTrivia(guestId: string) {
@@ -220,7 +447,6 @@ export async function checkTrivia(guestId: string) {
   }
 
   if (isPending(album.packsLeft, "trivia")) {
-    // Ya la ganó pero no abrió el sobre todavía
     return { available: false, reason: "already_won" as const }
   }
 
@@ -249,60 +475,54 @@ export async function checkTrivia(guestId: string) {
 
 // ─────────────────────────────────────────────
 // ANSWER TRIVIA
-//
-// FIX: al acertar, ahora SÍ se agrega "trivia" a packsLeft en DB.
-// Antes solo se agregaba en el estado del cliente, y openPack
-// rechazaba el sobre con "Este sobre ya fue abierto".
 // ─────────────────────────────────────────────
 
 export async function answerTrivia(guestId: string, triviaId: string, answerIndex: number) {
   const album = await db.figusAlbum.findUnique({ where: { guestId } })
-  if (!album) return { correct: false, error: "Álbum no encontrado" }
+  if (!album) return { correct: false as const, error: "Álbum no encontrado" }
 
   if (wasUsed(album.packsLeft, "trivia") || isPending(album.packsLeft, "trivia")) {
-    return { correct: false, error: "Ya respondiste esta trivia" }
+    return { correct: false as const, error: "Ya respondiste esta trivia" }
   }
 
   const trivia = await db.figusTrivia.findUnique({ where: { id: triviaId } })
-  if (!trivia) return { correct: false, error: "Trivia no encontrada" }
+  if (!trivia) return { correct: false as const, error: "Trivia no encontrada" }
 
   if (trivia.activeAt && trivia.durationSeconds) {
     const now = new Date()
     const expiresAt = new Date(trivia.activeAt.getTime() + trivia.durationSeconds * 1000)
-    if (now > expiresAt) return { correct: false, error: "Tiempo agotado" }
+    if (now > expiresAt) return { correct: false as const, error: "Tiempo agotado" }
   }
 
   if (answerIndex !== trivia.answer) {
-    return { correct: false }
+    return { correct: false as const }
   }
 
-  await db.figusAlbum.update({
+  const updated = await db.figusAlbum.update({
     where: { guestId },
     data: { packsLeft: { push: "trivia" } },
+    select: { packsLeft: true },
   })
 
-  revalidatePath(`/juego/${guestId}`)
-  return { correct: true }
+  revalidatePath(`/${guestId}`)
+  return { correct: true as const, packsLeft: updated.packsLeft }
 }
 
 // ─────────────────────────────────────────────
-// CHECK CODIGO
+// REDEEM CODIGO (sobres por entrevista, +N variable)
 //
-// FIX: igual que la trivia — al validar el código ahora se agrega
-// "codigo" a packsLeft en DB para que openPack lo acepte. Si el
-// guest ya lo había validado pero no abrió el sobre, se devuelve
-// valid:true sin duplicar el premio.
+// Valida el código activo, lo marca usado por este invitado y agrega
+// un token "codigo#<value>" a packsLeft. A diferencia de la versión
+// anterior NO es de una sola vez: cada código distinto de la noche
+// (entrevistas, sorpresas) suma su propio sobre.
 // ─────────────────────────────────────────────
 
-export async function checkCodigo(guestId: string, code: string) {
-  const album = await db.figusAlbum.findUnique({ where: { guestId } })
-  if (!album) return { valid: false, error: "Álbum no encontrado" }
-
-  if (wasUsed(album.packsLeft, "codigo")) {
-    return { valid: false, error: "Ya usaste tu sobre de código" }
-  }
-
-  const yaPendiente = isPending(album.packsLeft, "codigo")
+export async function redeemCodigo(guestId: string, code: string) {
+  const album = await db.figusAlbum.findUnique({
+    where: { guestId },
+    select: { id: true },
+  })
+  if (!album) return { valid: false as const, error: "Álbum no encontrado" }
 
   const now = new Date()
   const codigo = await db.figusCodigo.findFirst({
@@ -313,35 +533,52 @@ export async function checkCodigo(guestId: string, code: string) {
     },
   })
 
-  if (!codigo) return { valid: false, error: "Código incorrecto" }
+  if (!codigo) return { valid: false as const, error: "Código incorrecto" }
 
   if (codigo.activeAt && codigo.durationSeconds) {
     const expiresAt = new Date(codigo.activeAt.getTime() + codigo.durationSeconds * 1000)
-    if (now < codigo.activeAt) return { valid: false, error: "Código no activo aún" }
-    if (now > expiresAt) return { valid: false, error: "Código expirado" }
+    if (now < codigo.activeAt) return { valid: false as const, error: "Código no activo aún" }
+    if (now > expiresAt) return { valid: false as const, error: "Código expirado" }
   }
 
   if (codigo.usedBy.includes(guestId)) {
-    // Ya lo canjeó: si el sobre sigue pendiente, dejarlo abrir; si no, rechazar
-    return yaPendiente
-      ? { valid: true }
-      : { valid: false, error: "Ya usaste este código" }
+    return { valid: false as const, error: "Ya usaste este código" }
   }
 
-  await db.figusCodigo.update({
-    where: { id: codigo.id },
-    data: { usedBy: { push: guestId } },
+  const value = Math.min(10, Math.max(1, codigo.value || PACK_DEFAULT.codigo || 4))
+
+  // Claim atómico + entrega del sobre en UNA transacción. El claim
+  // (updateMany NOT usedBy has) gana solo si dos requests no compiten;
+  // y si el push del token falla, la transacción revierte el claim, así
+  // el código nunca queda consumido sin haber entregado el sobre.
+  const packsLeft = await db.$transaction(async (tx) => {
+    const claim = await tx.figusCodigo.updateMany({
+      where: { id: codigo.id, NOT: { usedBy: { has: guestId } } },
+      data: { usedBy: { push: guestId } },
+    })
+    if (claim.count === 0) return null
+    const updated = await tx.figusAlbum.update({
+      where: { guestId },
+      data: { packsLeft: { push: `codigo#${value}` } },
+      select: { packsLeft: true },
+    })
+    return updated.packsLeft
   })
 
-  if (!yaPendiente) {
-    await db.figusAlbum.update({
-      where: { guestId },
-      data: { packsLeft: { push: "codigo" } },
-    })
+  if (!packsLeft) {
+    return { valid: false as const, error: "Ya usaste este código" }
   }
 
-  revalidatePath(`/juego/${guestId}`)
-  return { valid: true }
+  revalidatePath(`/${guestId}`)
+  return { valid: true as const, value, packsLeft }
+}
+
+// Wrapper de compatibilidad (no usar en código nuevo).
+export async function checkCodigo(guestId: string, code: string) {
+  const res = await redeemCodigo(guestId, code)
+  return res.valid
+    ? { valid: true as const }
+    : { valid: false as const, error: res.error }
 }
 
 // ─────────────────────────────────────────────
@@ -356,12 +593,16 @@ export async function saveGuestProfile(
   guestId: string,
   name: string,
   avatar: string,
+  selfie?: string | null,
 ): Promise<SaveGuestProfileResult> {
   try {
+    // La selfie es un data URL chico (~128px JPEG); si supera ~200KB la
+    // descartamos para no llenar la fila (debería venir comprimida del cliente).
+    const safeSelfie = selfie && selfie.startsWith("data:image") && selfie.length < 200_000 ? selfie : null
     await db.androLedGuest.upsert({
       where: { id: guestId },
-      update: { name, avatar },
-      create: { id: guestId, name, avatar },
+      update: { name, avatar, selfie: safeSelfie },
+      create: { id: guestId, name, avatar, selfie: safeSelfie },
     })
     return { ok: true }
   } catch (err) {

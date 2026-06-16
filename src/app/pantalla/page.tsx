@@ -77,6 +77,15 @@ function avatarGlyph(avatar: string | null): string {
   return (avatar && AVATAR_GLYPHS[avatar]) || "👑";
 }
 
+// Cara del invitado en la pantalla: selfie si tiene, si no el glyph.
+function faceOf(p: { avatar: string | null; selfie: string | null }): React.ReactNode {
+  if (p.selfie) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={p.selfie} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "inherit" }} />;
+  }
+  return avatarGlyph(p.avatar);
+}
+
 function figOf(id: number | null) {
   return id === null ? null : (FIGS.find((f) => f.id === id) ?? null);
 }
@@ -744,7 +753,7 @@ export default function PantallaSalon() {
                   }}
                 >
                   <div className="rk">{idx + 1}</div>
-                  <div className="av">{avatarGlyph(p.avatar)}</div>
+                  <div className="av" style={{overflow:"hidden"}}>{faceOf(p)}</div>
                   <div className="nm">{p.name}</div>
                   <div className="miss">
                     {miss && (
@@ -873,7 +882,7 @@ export default function PantallaSalon() {
               return (
                 <div key={p.id} className={`cmp${i === 0 ? " first" : ""}`}>
                   {i === 0 && <div className="crown">👑</div>}
-                  <div className="av">{avatarGlyph(p.avatar)}</div>
+                  <div className="av" style={{overflow:"hidden"}}>{faceOf(p)}</div>
                   <div className="nm">{p.name}</div>
                   <div className="ct">{p.uniques}/15</div>
                   <div className="miss">

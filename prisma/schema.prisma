@@ -76,6 +76,9 @@ model AndroLedGuest {
   nroPulsera             Int?
   pulseraEntregada       Boolean      @default(false)
   avatar                 String?
+  // Selfie del invitado (data URL JPEG ~128px, recortada/comprimida en el
+  // dispositivo). Si está, se muestra en vez del glyph del avatar.
+  selfie                 String?
   figus                  FigusAlbum?
 }
 
@@ -84,8 +87,84 @@ model FigusAlbum {
   guestId   String        @unique
   counts    Json          @default("{}")
   packsLeft String[]      @default(["start"])
+  // Estado local del jugador (sobre regalo en camino). El Reino real
+  // (feed/premios/doradas/cambios) vive en tablas propias, no acá.
+  state     Json          @default("{}")
+  // Código de 4 dígitos para canje directo cara a cara (único por evento).
+  tradeCode String?       @unique
+  // Marcado al completar las 15 figus (para reclamar premio una sola vez).
+  completedAt DateTime?
   guest     AndroLedGuest @relation(fields: [guestId], references: [id], onDelete: Cascade)
   updatedAt DateTime      @updatedAt
+}
+
+// Feed del Reino: eventos reales de todos los invitados (sobres, doradas,
+// cambios, álbumes completos). Se lee por evento, más nuevos primero.
+model FigusEvent {
+  id        String   @id @default(cuid())
+  eventId   String
+  kind      String
+  text      String
+  actorId   String?
+  createdAt DateTime @default(now())
+
+  @@index([eventId, createdAt])
+}
+
+// Stock global de las 3 cartas doradas: cada índice lo gana UN invitado
+// (primero que la saca). Cada dorada se lleva un colgante RGB.
+model FigusGold {
+  id          String    @id @default(cuid())
+  eventId     String
+  goldIdx     Int
+  winnerId    String?
+  winnerName  String?
+  wonAt       DateTime?
+  deliveredAt DateTime? // marcado por el admin al entregar la carta/colgante
+
+  @@unique([eventId, goldIdx])
+}
+
+// Premios principales: el 1º/2º/3º en completar el álbum se los lleva.
+model FigusPrize {
+  id          String    @id @default(cuid())
+  eventId     String
+  prizeKey    String
+  winnerId    String?
+  winnerName  String?
+  claimedAt   DateTime?
+  deliveredAt DateTime? // marcado por el admin al entregar el premio físico
+
+  @@unique([eventId, prizeKey])
+}
+
+// Inventario de regalos físicos que el admin entrega y descuenta (colgantes
+// RGB, y cualquier otro premio extra que cargue desde el panel).
+model FigusInventory {
+  id        String   @id @default(cuid())
+  eventId   String
+  key       String
+  label     String
+  emoji     String   @default("🎁")
+  total     Int      @default(0)
+  delivered Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@unique([eventId, key])
+}
+
+// Pedidos de cambio ("se busca"): un invitado pide una figu que le falta.
+model FigusTradeRequest {
+  id        String   @id @default(cuid())
+  eventId   String
+  guestId   String
+  guestName String
+  figId     Int
+  status    String   @default("open")
+  createdAt DateTime @default(now())
+
+  @@index([eventId, status])
+  @@index([guestId])
 }
 
 model FigusTrivia {
@@ -104,6 +183,9 @@ model FigusCodigo {
   id              String    @id @default(cuid())
   eventId         String
   code            String
+  // Cuántas figus entrega el sobre de este código (sobres por entrevista:
+  // +1 / +3 / +5 / +10). Los códigos lanzados por la pantalla usan el default.
+  value           Int       @default(4)
   active          Boolean   @default(false)
   activeAt        DateTime?
   durationSeconds Int?
