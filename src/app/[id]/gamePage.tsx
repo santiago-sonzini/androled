@@ -651,14 +651,22 @@ body {
 // ─────────────────────────────────────────────
 
 function Starfield() {
+  // Posiciones DETERMINÍSTICAS (no Math.random) para que SSR y cliente
+  // coincidan y no haya mismatch de hidratación al renderizar el álbum directo.
   const stars = useRef(
-    Array.from({ length: 46 }, (_, i) => ({
-      key: i,
-      left: `${Math.random() * 100}%`,
-      top: `${Math.random() * 70}%`,
-      size: `${Math.random() * 2 + 1}px`,
-      delay: `${Math.random() * 4}s`,
-    })),
+    Array.from({ length: 46 }, (_, i) => {
+      const r = (n: number) => {
+        const x = Math.sin((i + 1) * n) * 10000;
+        return x - Math.floor(x);
+      };
+      return {
+        key: i,
+        left: `${(r(12.9898) * 100).toFixed(3)}%`,
+        top: `${(r(78.233) * 70).toFixed(3)}%`,
+        size: `${(r(3.7) * 2 + 1).toFixed(2)}px`,
+        delay: `${(r(5.1) * 4).toFixed(2)}s`,
+      };
+    }),
   );
   return (
     <div className="fk-stars">
@@ -2042,19 +2050,29 @@ const PRIZE_NM: Record<string, string> = {
   peluche: "Peluche Disney",
 };
 
+// Dato inicial resuelto en el server (SSR) y pasado por la page.
+type AlbumLoad = Awaited<ReturnType<typeof loadAlbum>>;
 
-export default function Page({ guestId }: { guestId: string }) {
-  const [core, setCore] = useState<Core>({
-    screen: "intro",
+export default function Page({ guestId, initial }: { guestId: string; initial: AlbumLoad }) {
+  // El perfil + counts ya vienen resueltos del server (SSR). Si el invitado
+  // ya tiene perfil, arrancamos directo en el álbum (sin intro ni carga).
+  const profile = initial && !("error" in initial) ? initial : null;
+  const initialAvatar = profile?.guest.avatar
+    ? AVATARS.find((a) => a.n === profile.guest.avatar) ?? null
+    : null;
+  const hasProfile = !!(profile?.guest.name && (initialAvatar || profile.guest.selfie));
+
+  const [core, setCore] = useState<Core>(() => ({
+    screen: hasProfile ? "app" : "intro",
     tab: "album",
-    name: "",
-    avatar: null,
-    selfie: null,
-    counts: {},
-    packsRaw: [],
-    nroPulsera: null,
-    mesa: null,
-  });
+    name: profile?.guest.name ?? "",
+    avatar: initialAvatar,
+    selfie: profile?.guest.selfie ?? null,
+    counts: profile?.album.counts ?? {},
+    packsRaw: profile?.album.packsLeft ?? [],
+    nroPulsera: profile?.guest.nroPulsera ?? null,
+    mesa: profile?.guest.mesa ?? null,
+  }));
   const [reino, setReino] = useState<ReinoData | null>(null);
   const [local, setLocal] = useState<Local>({ gift: null });
 
@@ -2066,7 +2084,8 @@ export default function Page({ guestId }: { guestId: string }) {
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const introPlayed = useRef(false);
-  const [introPlaying, setIntroPlaying] = useState(true);
+  // Returning user (ya tiene perfil) → no se reproduce la intro mágica.
+  const [introPlaying, setIntroPlaying] = useState(!hasProfile);
   const hydratedRef = useRef(false);
   const welcomeOffered = useRef(false);
   const completionShownRef = useRef(false);
@@ -2154,43 +2173,16 @@ export default function Page({ guestId }: { guestId: string }) {
     }
   }, [guestId]);
 
-  // ── carga inicial: crea stubs + perfil + counts, después el Reino ──
+  // ── carga inicial liviana: el perfil + counts ya vienen del server, así que
+  //    acá solo el sobre regalo pendiente (necesita Date.now, client-only) y
+  //    la carga del Reino (feed/top/premios/doradas). ──
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const d = await loadAlbum(guestId).catch(() => null);
-      if (cancelled || !d) return;
-      if ("error" in d) {
-        showToast(d.error ?? "Error cargando el álbum");
-        return;
-      }
-      const savedAvatar = d.guest.avatar ? AVATARS.find((a) => a.n === d.guest.avatar) ?? null : null;
-      setCore((s) => {
-        const name = s.name || d.guest.name || "";
-        const avatar = s.avatar || savedAvatar;
-        const selfie = s.selfie || d.guest.selfie || null;
-        const hasLocal = Object.keys(s.counts).length > 0 || s.packsRaw.length > 0;
-        return {
-          ...s,
-          name,
-          avatar,
-          selfie,
-          nroPulsera: d.guest.nroPulsera,
-          mesa: d.guest.mesa,
-          counts: hasLocal ? s.counts : d.album.counts,
-          packsRaw: hasLocal ? s.packsRaw : d.album.packsLeft,
-          screen: s.screen === "intro" && name && (avatar || selfie) ? "app" : s.screen,
-        };
-      });
-      const st = d.album.state as { gift?: number } | undefined;
-      if (st && typeof st.gift === "number" && st.gift > Date.now()) setLocal({ gift: st.gift });
-      hydratedRef.current = true;
-      void refreshReino();
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [guestId, showToast, refreshReino]);
+    const st = profile?.album.state as { gift?: number } | undefined;
+    if (st && typeof st.gift === "number" && st.gift > Date.now()) setLocal({ gift: st.gift });
+    hydratedRef.current = true;
+    void refreshReino();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── realtime: ante cambios en las tablas del Reino, refrescar (debounced
   //    1.5s para no tormentear con cada apertura de sobre del salón) ──
@@ -2298,6 +2290,29 @@ export default function Page({ guestId }: { guestId: string }) {
     setSheet({ type: "completion", prizeNm });
   }, []);
 
+  // ── PRE-APERTURA del sobre ──
+  // openPack se dispara en background apenas aparece el sobre (antes del tap):
+  // corre mientras el invitado mira el sobre animado, así al tocarlo el
+  // resultado ya está resuelto y el reveal es INSTANTÁNEO (sin esperar al
+  // server). El sobre es modal (no se puede cerrar sin abrir), así que
+  // consumirlo al mostrarlo es seguro; si recargara antes del tap, las figus
+  // ya quedaron persistidas y el álbum se resincroniza.
+  const packPrefetch = useRef<Map<string, Promise<Awaited<ReturnType<typeof openPack>>>>>(new Map());
+  const prefetchPack = useCallback(
+    (token: string) => {
+      if (packPrefetch.current.has(token)) return;
+      const p = openPack(guestId, token);
+      p.catch(() => undefined);
+      packPrefetch.current.set(token, p);
+    },
+    [guestId],
+  );
+
+  // Pre-abrir el sobre apenas aparece su sheet (incluido el de bienvenida).
+  useEffect(() => {
+    if (sheet.type === "pack") prefetchPack(sheet.token);
+  }, [sheet, prefetchPack]);
+
   // ── abrir sobre ──
   const resyncAlbum = useCallback(async () => {
     try {
@@ -2314,7 +2329,10 @@ export default function Page({ guestId }: { guestId: string }) {
     if (pending) return;
     setPending(true);
     try {
-      const res = await openPack(guestId, token);
+      // Si el sheet ya disparó el prefetch, a esta altura la promesa suele
+      // estar resuelta y el await es instantáneo.
+      const cached = packPrefetch.current.get(token);
+      const res = await (cached ?? openPack(guestId, token));
       if ("error" in res && res.error) {
         showToast(res.error);
         setSheet({ type: "none" });
@@ -2350,6 +2368,8 @@ export default function Page({ guestId }: { guestId: string }) {
     } catch {
       showToast("Error de conexión, probá de nuevo");
     } finally {
+      // Consumido (o fallido): se descarta para que un retry re-pida.
+      packPrefetch.current.delete(token);
       setPending(false);
     }
   };
