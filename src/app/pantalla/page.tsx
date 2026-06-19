@@ -45,21 +45,21 @@ const REALTIME_TABLES = [
 // ─────────────────────────────────────────────
 
 const FIGS: { id: number; g: string; film: string }[] = [
-  { id: 1, g: "🐚", film: "La Sirenita" },
-  { id: 2, g: "❄️", film: "Frozen" },
-  { id: 3, g: "🌺", film: "Moana" },
-  { id: 4, g: "🗡️", film: "Mulán" },
-  { id: 5, g: "🪔", film: "Aladdín" },
-  { id: 6, g: "🌹", film: "La Bella y la Bestia" },
-  { id: 7, g: "👠", film: "Cenicienta" },
-  { id: 8, g: "💜", film: "Enredados" },
-  { id: 9, g: "🍎", film: "Blancanieves" },
-  { id: 10, g: "🌿", film: "La Bella Durmiente" },
-  { id: 11, g: "🍃", film: "Pocahontas" },
-  { id: 12, g: "🏹", film: "Brave" },
-  { id: 13, g: "🐸", film: "La Princesa y el Sapo" },
-  { id: 14, g: "🦋", film: "Encanto" },
-  { id: 15, g: "🖤", film: "Maléfica" },
+  { id: 1, g: "🍯", film: "Winnie the Pooh" },
+  { id: 2, g: "🍎", film: "Blancanieves" },
+  { id: 3, g: "🐘", film: "Dumbo" },
+  { id: 4, g: "🐶", film: "101 Dálmatas" },
+  { id: 5, g: "🧚", film: "Peter Pan" },
+  { id: 6, g: "🐚", film: "La Sirenita" },
+  { id: 7, g: "🌺", film: "Moana" },
+  { id: 8, g: "🏎️", film: "Cars" },
+  { id: 9, g: "🐭", film: "Ratatuille" },
+  { id: 10, g: "🍃", film: "Pocahontas" },
+  { id: 11, g: "👠", film: "Cenicienta" },
+  { id: 12, g: "🪔", film: "Aladdín" },
+  { id: 13, g: "🖤", film: "Maléfica" },
+  { id: 14, g: "💀", film: "Coco" },
+  { id: 15, g: "🐸", film: "La Princesa y el Sapo" },
 ];
 
 const AVATAR_GLYPHS: Record<string, string> = {

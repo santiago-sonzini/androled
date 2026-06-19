@@ -29,20 +29,22 @@ interface Fig {
   r: Rarity
 }
 
+// Rareza real impresa en cada carta: Común ★ (1-5), Especial ★★ (6-11),
+// Legendaria ★★★ (12-15). Las legendarias son el muro que obliga a cambiar.
 const FIGS: Fig[] = [
-  { id: 1,  r: "m"     },
+  { id: 1,  r: "comun" },
   { id: 2,  r: "comun" },
-  { id: 3,  r: "m"     },
-  { id: 4,  r: "m"     },
-  { id: 5,  r: "m"     },
-  { id: 6,  r: "m"     },
-  { id: 7,  r: "m"     },
-  { id: 8,  r: "comun" },
-  { id: 9,  r: "m"     },
-  { id: 10, r: "comun" },
+  { id: 3,  r: "comun" },
+  { id: 4,  r: "comun" },
+  { id: 5,  r: "comun" },
+  { id: 6,  r: "rara"  },
+  { id: 7,  r: "rara"  },
+  { id: 8,  r: "rara"  },
+  { id: 9,  r: "rara"  },
+  { id: 10, r: "rara"  },
   { id: 11, r: "rara"  },
-  { id: 12, r: "rara"  },
-  { id: 13, r: "rara"  },
+  { id: 12, r: "epica" },
+  { id: 13, r: "epica" },
   { id: 14, r: "epica" },
   { id: 15, r: "epica" },
 ]

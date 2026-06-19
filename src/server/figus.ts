@@ -40,30 +40,31 @@ export const PRIZE_META: Record<string, { nm: string; g: string }> = {
   peluche: { nm: "Peluche Disney", g: "🧸" },
 }
 
+// Doradas (cartas 16/17/18).
 export const GOLD_META: { nm: string; g: string }[] = [
-  { nm: "Marti · El Vals", g: "👑" },
-  { nm: "Marti & Papá", g: "🤍" },
-  { nm: "Marti Reina", g: "✨" },
+  { nm: "Marti & Stitch", g: "💙" },
+  { nm: "Marti & Simba", g: "🦁" },
+  { nm: "Marti Enredada", g: "🏮" },
 ]
 
 // Nombre + glyph de cada figu (para construir el texto de los eventos del
 // feed server-side). Espejo del FIGS del cliente.
 export const FIG_META: Record<number, { nm: string; g: string }> = {
-  1: { nm: "Marti Sirena", g: "🐚" },
-  2: { nm: "Marti de Hielo", g: "❄️" },
-  3: { nm: "Marti Navegante", g: "🌺" },
-  4: { nm: "Marti Guerrera", g: "🗡️" },
-  5: { nm: "Marti Jazmín", g: "🪔" },
-  6: { nm: "Marti Bella", g: "🌹" },
-  7: { nm: "Marti Cenicienta", g: "👠" },
-  8: { nm: "Marti Rapunzel", g: "💜" },
-  9: { nm: "Marti Blanca", g: "🍎" },
-  10: { nm: "Marti Aurora", g: "🌿" },
-  11: { nm: "Marti Pocahontas", g: "🍃" },
-  12: { nm: "Marti Valiente", g: "🏹" },
-  13: { nm: "Marti Tiana", g: "🐸" },
-  14: { nm: "Marti Encanto", g: "🦋" },
-  15: { nm: "Marti Maléfica", g: "🖤" },
+  1: { nm: "Marti & Pooh", g: "🍯" },
+  2: { nm: "Marti & la Manzana", g: "🍎" },
+  3: { nm: "Marti & Dumbo", g: "🐘" },
+  4: { nm: "Marti & los Dálmatas", g: "🐶" },
+  5: { nm: "Marti Bell", g: "🧚" },
+  6: { nm: "Marti Sirena", g: "🐚" },
+  7: { nm: "Marti Navegante", g: "🌺" },
+  8: { nm: "Marti en el Circuito", g: "🏎️" },
+  9: { nm: "Marti & Remy", g: "🐭" },
+  10: { nm: "Marti & los Vientos", g: "🍃" },
+  11: { nm: "Marti a Medianoche", g: "👠" },
+  12: { nm: "Marti en Agrabah", g: "🪔" },
+  13: { nm: "Marti Maléfica", g: "🖤" },
+  14: { nm: "Marti & Dante", g: "💀" },
+  15: { nm: "Marti en el Bayou", g: "🐸" },
 }
 
 export function figMeta(id: number) {

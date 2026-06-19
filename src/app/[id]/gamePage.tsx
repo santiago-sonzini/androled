@@ -1,6 +1,7 @@
 "use client";
 import { useState, useCallback, useRef, useEffect } from "react";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { CARD_BLUR } from "./cardBlur";
 import {
   loadAlbum,
   openPack,
@@ -157,29 +158,54 @@ const PACK_DEFAULT: Record<string, number> = {
 // DATA
 // ─────────────────────────────────────────────
 
+// 15 figus del álbum (arte real en /public/figus). Rareza según el marco
+// impreso: Común ★ · Especial ★★ · Legendaria ★★★.
 const FIGS: Fig[] = [
-  { id: 1, g: "🐚", nm: "Marti Sirena", film: "La Sirenita", r: "m" },
-  { id: 2, g: "❄️", nm: "Marti de Hielo", film: "Frozen", r: "comun" },
-  { id: 3, g: "🌺", nm: "Marti Navegante", film: "Moana", r: "m" },
-  { id: 4, g: "🗡️", nm: "Marti Guerrera", film: "Mulán", r: "m" },
-  { id: 5, g: "🪔", nm: "Marti Jazmín", film: "Aladdín", r: "m" },
-  { id: 6, g: "🌹", nm: "Marti Bella", film: "La Bella y la Bestia", r: "m" },
-  { id: 7, g: "👠", nm: "Marti Cenicienta", film: "Cenicienta", r: "m" },
-  { id: 8, g: "💜", nm: "Marti Rapunzel", film: "Enredados", r: "comun" },
-  { id: 9, g: "🍎", nm: "Marti Blanca", film: "Blancanieves", r: "m" },
-  { id: 10, g: "🌿", nm: "Marti Aurora", film: "La Bella Durmiente", r: "comun" },
-  { id: 11, g: "🍃", nm: "Marti Pocahontas", film: "Pocahontas", r: "rara" },
-  { id: 12, g: "🏹", nm: "Marti Valiente", film: "Brave", r: "rara" },
-  { id: 13, g: "🐸", nm: "Marti Tiana", film: "La Princesa y el Sapo", r: "rara" },
-  { id: 14, g: "🦋", nm: "Marti Encanto", film: "Encanto", r: "epica" },
-  { id: 15, g: "🖤", nm: "Marti Maléfica", film: "Maléfica", r: "epica" },
+  { id: 1, g: "🍯", nm: "Marti & Pooh", film: "Winnie the Pooh", r: "comun" },
+  { id: 2, g: "🍎", nm: "Marti & la Manzana", film: "Blancanieves", r: "comun" },
+  { id: 3, g: "🐘", nm: "Marti & Dumbo", film: "Dumbo", r: "comun" },
+  { id: 4, g: "🐶", nm: "Marti & los Dálmatas", film: "101 Dálmatas", r: "comun" },
+  { id: 5, g: "🧚", nm: "Marti Bell", film: "Peter Pan", r: "comun" },
+  { id: 6, g: "🐚", nm: "Marti Sirena", film: "La Sirenita", r: "rara" },
+  { id: 7, g: "🌺", nm: "Marti Navegante", film: "Moana", r: "rara" },
+  { id: 8, g: "🏎️", nm: "Marti en el Circuito", film: "Cars", r: "rara" },
+  { id: 9, g: "🐭", nm: "Marti & Remy", film: "Ratatuille", r: "rara" },
+  { id: 10, g: "🍃", nm: "Marti & los Vientos", film: "Pocahontas", r: "rara" },
+  { id: 11, g: "👠", nm: "Marti a Medianoche", film: "Cenicienta", r: "rara" },
+  { id: 12, g: "🪔", nm: "Marti en Agrabah", film: "Aladdín", r: "epica" },
+  { id: 13, g: "🖤", nm: "Marti Maléfica", film: "Maléfica", r: "epica" },
+  { id: 14, g: "💀", nm: "Marti & Dante", film: "Coco", r: "epica" },
+  { id: 15, g: "🐸", nm: "Marti en el Bayou", film: "La Princesa y el Sapo", r: "epica" },
 ];
 
+// Doradas (cartas 16/17/18, marco de oro ★★★★).
 const GOLD: GoldCard[] = [
-  { g: "👑", nm: "Marti · El Vals" },
-  { g: "🤍", nm: "Marti & Papá" },
-  { g: "✨", nm: "Marti Reina" },
+  { g: "💙", nm: "Marti & Stitch" },
+  { g: "🦁", nm: "Marti & Simba" },
+  { g: "🏮", nm: "Marti Enredada" },
 ];
+
+// Ruta del arte real de cada carta (las doradas son 16,17,18). Todas se
+// precargan al entrar (ver preload en Page), así nunca hay que esperar a
+// que aparezca la imagen: cuando se muestra ya está en caché.
+const figImg = (id: number) => `/figus/${String(id).padStart(2, "0")}.webp`;
+const ALL_CARD_IDS = Array.from({ length: 18 }, (_, i) => i + 1);
+
+// Carta: el blur (LQIP) va como fondo del <img>, así si por algo todavía no
+// cargó se ve el preview borroso al instante en vez de un hueco. Con la
+// precarga, la imagen nítida ya está en caché y aparece de una.
+function CardImg({ id, alt }: { id: number; alt: string }) {
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      className="fk-card-img"
+      src={figImg(id)}
+      alt={alt}
+      decoding="async"
+      style={{ backgroundImage: `url(${CARD_BLUR[id]})` }}
+    />
+  );
+}
 
 const AVATARS: Avatar[] = [
   { g: "👑", n: "Princesa" },
@@ -384,7 +410,7 @@ body {
 
 /* fig grid */
 .fk-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 11px; margin-top: 6px; }
-.fk-fig { position: relative; border-radius: 14px; aspect-ratio: .72; overflow: hidden; border: 1px solid rgba(255,255,255,.07); background: linear-gradient(160deg, rgba(40,28,80,.7), rgba(20,13,49,.7)); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 8px 6px; }
+.fk-fig { position: relative; border-radius: 14px; aspect-ratio: .74; overflow: hidden; border: 1px solid rgba(255,255,255,.07); background: linear-gradient(160deg, rgba(40,28,80,.7), rgba(20,13,49,.7)); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 8px 6px; }
 .fk-fig.empty { background: repeating-linear-gradient(135deg, rgba(255,255,255,.025) 0 8px, transparent 8px 16px), rgba(12,9,32,.5); border-style: dashed; border-color: rgba(255,255,255,.1); }
 .fk-fig.empty .q { font-family: 'Cormorant Garamond'; font-size: 32px; color: var(--muted-2); font-weight: 700; }
 .fk-fig .glyph   { font-size: 34px; filter: drop-shadow(0 4px 10px rgba(0,0,0,.4)); }
@@ -392,7 +418,10 @@ body {
 .fk-fig .film    { font-size: 8.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 700; margin-top: 4px; }
 .fk-fig .num     { position: absolute; top: 6px; left: 7px; font-size: 9px; font-weight: 800; color: var(--muted-2); }
 .fk-fig.have::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 55%, rgba(227,184,95,.10)); pointer-events: none; }
-.fk-fig .dupe-q { position: absolute; bottom: 6px; right: 6px; background: linear-gradient(180deg, var(--rose), var(--rose-deep)); color: #3a0f23; font-size: 9px; font-weight: 900; border-radius: 8px; padding: 2px 6px; box-shadow: 0 4px 10px rgba(0,0,0,.3); }
+.fk-fig.art { padding: 0; border: 0; background: #0b0820; }
+.fk-fig.art::after { display: none; }
+.fk-card-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background-size: cover; background-position: center; }
+.fk-fig .dupe-q { position: absolute; bottom: 6px; right: 6px; background: linear-gradient(180deg, var(--rose), var(--rose-deep)); color: #3a0f23; font-size: 9px; font-weight: 900; border-radius: 8px; padding: 2px 6px; box-shadow: 0 4px 10px rgba(0,0,0,.3); z-index: 2; }
 .fk-fig.flash { animation: fk-pop .5s ease; }
 @keyframes fk-pop { 0% { transform: scale(.6); opacity: 0; } 60% { transform: scale(1.08); } 100% { transform: scale(1); } }
 .fk-fig.m-card { border: 2px solid #f1a8c6; box-shadow: 0 0 0 1px #d76a98, 0 0 12px 3px rgba(215,106,152,.55), inset 0 0 18px rgba(241,168,198,.08); }
@@ -406,9 +435,10 @@ body {
 
 /* gold row */
 .fk-gold-row { display: grid; grid-template-columns: repeat(3,1fr); gap: 11px; }
-.fk-gcard { aspect-ratio: .72; border-radius: 14px; position: relative; overflow: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 8px; background: linear-gradient(160deg, #2c2143, #191130); border: 1px solid var(--line); }
+.fk-gcard { aspect-ratio: .74; border-radius: 14px; position: relative; overflow: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 8px; background: linear-gradient(160deg, #2c2143, #191130); border: 1px solid var(--line); }
 .fk-gcard.locked { filter: grayscale(.5); opacity: .62; }
 .fk-gcard.won { background: linear-gradient(160deg, #3a2c12, #191130); border-color: var(--gold-1); box-shadow: 0 0 22px rgba(227,184,95,.28); }
+.fk-gcard.art { padding: 0; border: 0; background: #0b0820; box-shadow: 0 0 22px rgba(227,184,95,.35); }
 .fk-gcard .glyph  { font-size: 30px; }
 .fk-gcard .fname  { font-family: 'Cormorant Garamond'; font-weight: 700; font-size: 13px; color: var(--gold-1); margin-top: 6px; line-height: 1; }
 .fk-gcard .lk     { position: absolute; top: 7px; right: 8px; font-size: 12px; opacity: .7; }
@@ -462,6 +492,8 @@ body {
 .fk-rays { position: absolute; width: 600px; height: 600px; left: 50%; top: 34%; transform: translate(-50%,-50%); z-index: 0; border-radius: 50%; background: conic-gradient(from 0deg, rgba(246,221,153,0), rgba(246,221,153,.14), rgba(246,221,153,0) 12%, rgba(246,221,153,0), rgba(246,221,153,.14), rgba(246,221,153,0) 36%, rgba(246,221,153,0), rgba(246,221,153,.14), rgba(246,221,153,0) 62%, rgba(246,221,153,0), rgba(246,221,153,.14), rgba(246,221,153,0) 88%); animation: fk-spin 22s linear infinite; }
 @keyframes fk-spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
 .fk-ticket { width: 225px; border-radius: 20px; padding: 22px 16px 18px; position: relative; z-index: 2; text-align: center; background: linear-gradient(165deg, #3a2c12, #171026); border: 1px solid var(--gold-1); box-shadow: 0 24px 70px rgba(227,184,95,.35), 0 0 0 4px rgba(246,221,153,.08); animation: fk-pop .6s ease; margin: 14px auto 0; }
+.fk-gold-reveal { width: min(58vw, 220px); aspect-ratio: .75; margin: 14px auto 0; position: relative; z-index: 2; border-radius: 16px; overflow: hidden; box-shadow: 0 24px 70px rgba(227,184,95,.5), 0 0 0 3px rgba(246,221,153,.2); animation: fk-pop .6s ease; }
+.fk-gold-reveal img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .fk-ticket .crown  { font-size: 42px; }
 .fk-ticket .nm     { font-family: 'Cormorant Garamond'; font-weight: 700; font-size: 24px; color: var(--gold-1); margin-top: 6px; line-height: 1; }
 .fk-ticket .sub    { font-size: 10px; letter-spacing: .2em; text-transform: uppercase; color: var(--muted); font-weight: 700; margin-top: 8px; }
@@ -545,7 +577,7 @@ body {
 .fk-stage .nexthint { font-size: 12px; color: var(--muted-2); font-weight: 700; animation: fk-beat2 1.6s infinite; }
 @keyframes fk-beat2 { 0%,100% { opacity: .5; } 50% { opacity: 1; } }
 
-.fk-bigcard { width: min(62vw, 240px); aspect-ratio: .7; perspective: 900px; cursor: pointer; animation: fk-cardenter .45s cubic-bezier(.2,.9,.3,1.2); }
+.fk-bigcard { width: min(62vw, 240px); aspect-ratio: .75; perspective: 900px; cursor: pointer; animation: fk-cardenter .45s cubic-bezier(.2,.9,.3,1.2); }
 @keyframes fk-cardenter { from { opacity: 0; transform: translateY(36px) scale(.85); } to { opacity: 1; transform: translateY(0) scale(1); } }
 .fk-bigcard .in { position: relative; width: 100%; height: 100%; transform-style: preserve-3d; transition: transform .65s cubic-bezier(.3,.9,.3,1); will-change: transform; }
 .fk-bigcard.go .in { transform: rotateY(180deg); }
@@ -556,6 +588,8 @@ body {
 .fk-bigcard.r-rara .fk-bcface.bk { background: linear-gradient(160deg,#e3f0e8,#b9c8d6 28%,#efe8f6 50%,#a9bfb4 72%,#dcd2ea); }
 .fk-bigcard.r-m .fk-bcface.bk { background: linear-gradient(160deg,#f7d9e9,#d76a98 30%,#fbe6f0 52%,#c45b86 75%,#f3c9de); }
 .fk-bigcard.r-epica .fk-bcface.bk { background: linear-gradient(160deg,#7a52b0,#caa64a 22%,#46286f 45%,#e3c878 62%,#33205c 85%,#8a5fc4); }
+.fk-bcface.bk.art { padding: 0; background: #0b0820; }
+.fk-bc-img { width: 100%; height: 100%; object-fit: cover; border-radius: 18px; }
 .fk-bc-in { position: relative; width: 100%; height: 100%; border-radius: 13px; overflow: hidden; display: flex; flex-direction: column; background: linear-gradient(170deg,#f6f1e4,#e9dfc8); }
 .fk-bigcard.r-rara .fk-bc-in { background: linear-gradient(170deg,#f2f6f0,#e0e8e4); }
 .fk-bigcard.r-m .fk-bc-in { background: linear-gradient(170deg,#fbeef4,#f0dce6); }
@@ -589,7 +623,7 @@ body {
 
 /* resumen del sobre: mini flips */
 .fk-reveal { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; max-width: 344px; }
-.fk-flip { width: 84px; aspect-ratio: .72; perspective: 600px; opacity: 0; transform: translateY(14px); animation: fk-rin .4s forwards; }
+.fk-flip { width: 84px; aspect-ratio: .74; perspective: 600px; opacity: 0; transform: translateY(14px); animation: fk-rin .4s forwards; }
 @keyframes fk-rin { to { opacity: 1; transform: translateY(0); } }
 .fk-flip .inner { position: relative; width: 100%; height: 100%; transform-style: preserve-3d; transition: transform .55s cubic-bezier(.3,.9,.3,1); }
 .fk-flip.go .inner { transform: rotateY(180deg); }
@@ -597,6 +631,11 @@ body {
 .fk-face.fr { background: repeating-linear-gradient(45deg, rgba(246,221,153,.07) 0 7px, transparent 7px 14px), linear-gradient(165deg,#241a4d,#140d31); }
 .fk-face.fr .mono { font-family: 'Cormorant Garamond'; font-weight: 700; font-size: 26px; color: var(--gold-2); }
 .fk-face.bk { transform: rotateY(180deg); background: linear-gradient(165deg, rgba(43,30,86,.97), rgba(18,11,44,.97)); }
+.fk-face.bk.art { padding: 0; background: #0b0820; overflow: hidden; }
+.fk-face-art { width: 100%; height: 100%; object-fit: cover; border-radius: 12px; }
+.fk-face.bk.art .tag { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%); padding: 1px 8px; border-radius: 99px; font-size: 8px; font-weight: 900; text-transform: uppercase; letter-spacing: .04em; z-index: 2; box-shadow: 0 2px 8px rgba(0,0,0,.5); }
+.fk-face.bk.art .tag.new { background: linear-gradient(180deg,#a9f5c9,#5ecf91); color: #0c3a22; }
+.fk-face.bk.art .tag.rep { background: linear-gradient(180deg,var(--rose),var(--rose-deep)); color: #3a0f23; }
 .fk-face.bk .g { font-size: 29px; }
 .fk-face.bk .nm { font-family: 'Cormorant Garamond'; font-weight: 600; font-size: 11.5px; color: #fff; margin-top: 5px; line-height: 1.05; }
 .fk-face.bk .tag { font-size: 7.5px; font-weight: 900; letter-spacing: .07em; text-transform: uppercase; margin-top: 5px; }
@@ -724,10 +763,9 @@ function SectionHeader({ label }: { label: string }) {
 
 function FigCard({ f, qty }: { f: Fig; qty: number }) {
   const num = String(f.id).padStart(2, "0");
-  const isM = f.r === "m";
   if (qty === 0) {
     return (
-      <div className={`fk-fig empty${isM ? " m-card" : ""}`}>
+      <div className="fk-fig empty">
         <span className="num">{num}</span>
         <span className="q">?</span>
         <div className="film" style={{ marginTop: 6 }}>
@@ -736,13 +774,10 @@ function FigCard({ f, qty }: { f: Fig; qty: number }) {
       </div>
     );
   }
+  // La carta real (con marco/número/nombre/rareza) llena la celda.
   return (
-    <div className={`fk-fig have${qty > 1 ? " flash" : ""}${isM ? " m-card" : ""}`}>
-      <span className="num">{num}</span>
-      {isM && <span className="m-badge">✦ M</span>}
-      <span className="glyph">{f.g}</span>
-      <div className="fname">{f.nm}</div>
-      <div className="film">{f.film}</div>
+    <div className={`fk-fig have art${qty > 1 ? " flash" : ""}`}>
+      <CardImg id={f.id} alt={f.nm} />
       {qty > 1 && <span className="dupe-q">x{qty}</span>}
     </div>
   );
@@ -836,6 +871,7 @@ function IntroScreen({
           onClick={() => fileRef.current?.click()}
         >
           <div className="ph">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             {selfie ? <img src={selfie} alt="" /> : "🤳"}
           </div>
           <div className="tx">
@@ -991,18 +1027,24 @@ function AlbumScreen({
         {(golds.length
           ? golds
           : GOLD.map((g, i) => ({ idx: i, nm: g.nm, g: g.g, mine: false, taken: false, winnerName: null }))
-        ).map((g) => (
-          <div key={g.idx} className={`fk-gcard ${g.mine ? "won" : "locked"}`}>
-            <span className="lk">{g.mine ? "✨" : "🔒"}</span>
-            <span className="glyph">{g.g}</span>
-            <div className="fname">{g.nm}</div>
-            {g.taken && !g.mine && g.winnerName && (
-              <small style={{ fontSize: 8, color: "var(--muted-2)", marginTop: 2 }}>
-                de {g.winnerName}
-              </small>
-            )}
-          </div>
-        ))}
+        ).map((g) =>
+          g.mine ? (
+            <div key={g.idx} className="fk-gcard art won">
+              <CardImg id={16 + g.idx} alt={g.nm} />
+            </div>
+          ) : (
+            <div key={g.idx} className="fk-gcard locked">
+              <span className="lk">🔒</span>
+              <span className="glyph">{g.g}</span>
+              <div className="fname">{g.nm}</div>
+              {g.taken && g.winnerName && (
+                <small style={{ fontSize: 8, color: "var(--muted-2)", marginTop: 2 }}>
+                  de {g.winnerName}
+                </small>
+              )}
+            </div>
+          ),
+        )}
       </div>
       <p className="fk-footnote">No hacen falta para ganar · cada dorada se lleva un colgante RGB 📿</p>
     </div>
@@ -1565,14 +1607,6 @@ const RARITY_PARTICLE_COLORS: Record<Rarity, string[]> = {
   m: ["#f1a8c6", "#d76a98", "#ff8fc0", "#fce4ef"],
 };
 
-const RARITY_LABEL: Record<Rarity, string> = {
-  comun: "Común",
-  rara: "Especial",
-  epica: "Legendaria",
-  m: "Especial",
-};
-const RARITY_STARS: Record<Rarity, number> = { comun: 1, rara: 2, epica: 3, m: 2 };
-
 function vibrate(p: number | number[]) {
   if (typeof navigator !== "undefined" && navigator.vibrate) {
     try {
@@ -1728,10 +1762,9 @@ function PackRevealSheet({
                 <div className="fk-face fr">
                   <span className="mono">✦</span>
                 </div>
-                <div className="fk-face bk">
-                  <span className="g">{cc.f.g}</span>
-                  <div className="nm">{cc.f.nm}</div>
-                  <div className="tag">{cc.isNew ? "¡Nueva!" : "Repetida"}</div>
+                <div className="fk-face bk art">
+                  <CardImg id={cc.f.id} alt={cc.f.nm} />
+                  <div className={`tag ${cc.isNew ? "new" : "rep"}`}>{cc.isNew ? "Nueva" : "Rep"}</div>
                 </div>
               </div>
             </div>
@@ -1771,21 +1804,8 @@ function PackRevealSheet({
             <div className="fk-bcface fr">
               <span className="mono">✦</span>
             </div>
-            <div className="fk-bcface bk">
-              <div className="fk-bc-in">
-                <div className="fk-bc-no">{String(c.f.id).padStart(2, "0")}</div>
-                <div className="fk-bc-rar">
-                  <b>{RARITY_LABEL[c.f.r]}</b>
-                  <span>{"★".repeat(RARITY_STARS[c.f.r])}</span>
-                </div>
-                <div className="fk-bc-art">
-                  <span className="glyph">{c.f.g}</span>
-                </div>
-                <div className="fk-bc-plate">
-                  <div className="nm">{c.f.nm}</div>
-                  <div className="fm">✦ {c.f.film} ✦</div>
-                </div>
-              </div>
+            <div className="fk-bcface bk art">
+              <CardImg id={c.f.id} alt={c.f.nm} />
             </div>
           </div>
         </div>
@@ -1816,10 +1836,8 @@ function DoradaOverlay({ idx, onClose }: { idx: number; onClose: () => void }) {
       <div className="fk-rays" />
       <div style={{ position: "relative", zIndex: 2 }} className="fk-center">
         <div className="fk-kicker">✨ ¡Figurita dorada! ✨</div>
-        <div className="fk-ticket">
-          <div className="crown">{g.g}</div>
-          <div className="nm">{g.nm}</div>
-          <div className="sub">Dorada del Reino</div>
+        <div className="fk-gold-reveal">
+          <CardImg id={16 + idx} alt={g.nm} />
         </div>
         <div className="fk-pill mt14" style={{ fontSize: 13, padding: "10px 18px" }}>
           📿 ¡Te llevás un colgante RGB de Marti!
@@ -2073,6 +2091,21 @@ export default function Page({ guestId }: { guestId: string }) {
       el.textContent = CSS;
       document.head.appendChild(el);
     }
+  }, []);
+
+  // ── precargar TODAS las cartas apenas se monta (arranca durante la intro
+  //    mágica), así cuando se muestran ya están en caché y aparecen al
+  //    instante: el usuario nunca espera a que cargue una imagen ──
+  useEffect(() => {
+    const imgs = ALL_CARD_IDS.map((id) => {
+      const im = new Image();
+      im.decoding = "async";
+      im.src = figImg(id);
+      return im;
+    });
+    return () => {
+      for (const im of imgs) im.src = "";
+    };
   }, []);
 
   const showToast = useCallback((msg: string) => {
