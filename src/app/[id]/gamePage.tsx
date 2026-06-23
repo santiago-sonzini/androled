@@ -63,6 +63,7 @@ interface Fig {
 interface GoldCard {
   g: string;
   nm: string;
+  prize: string;
 }
 
 interface Avatar {
@@ -172,9 +173,9 @@ const FIGS: Fig[] = [
 
 // Doradas (cartas 16/17/18, marco de oro ★★★★).
 const GOLD: GoldCard[] = [
-  { g: "💙", nm: "Marti & Stitch" },
-  { g: "🦁", nm: "Marti & Simba" },
-  { g: "🏮", nm: "Marti Enredada" },
+  { g: "💙", nm: "Marti & Stitch", prize: "Stitch Robótico" },
+  { g: "🦁", nm: "Marti & Simba", prize: "LEGO Simba" },
+  { g: "🏮", nm: "Marti Enredada", prize: "Funko Pop Enredadas" },
 ];
 
 // Ruta del arte real de cada carta (las doradas son 16,17,18). Todas se
@@ -214,13 +215,12 @@ const AVATARS: Avatar[] = [
 const SRC_META: Record<string, { ic: string; t: string; d: string }> = {
   start: { ic: "🎁", t: "Sobre de bienvenida", d: "Tu sobre al entrar" },
   codigo: { ic: "🎤", t: "Código de entrevista", d: "+1 a +10 figus · entrevistas y sorpresas" },
-  carta: { ic: "🃏", t: "Sobre escondido", d: "Buscalos por el salón · +2 c/u" },
+  carta: { ic: "🃏", t: "Sobre escondido", d: "Buscá el sobre y canjeá su código" },
   ig: { ic: "📸", t: "Seguinos en IG", d: "@andro.show · +1 figu" },
   gift: { ic: "🎁", t: "Sobre de regalo", d: "Cae desde el Reino" },
 };
 
 const SEC_TOTAL = 10; // colgantes RGB de Marti
-const CARTAS_MAX = 3; // sobres escondidos por persona
 const INSTAGRAM_URL = "https://instagram.com/andro.show";
 
 function fig(id: number): Fig {
@@ -943,7 +943,7 @@ function AlbumScreen({
 
   const tiles: { key: string; ready?: string; spent?: boolean; hint?: string; action?: string }[] = [
     { key: "codigo" },
-    { key: "carta", spent: cartasFound >= CARTAS_MAX },
+    { key: "carta" },
     { key: "ig", spent: igUsed },
     { key: "gift", hint: `⏱️ Cada ${giftMinutes} min · toca en Cuenta`, action: "account" },
   ];
@@ -1000,8 +1000,8 @@ function AlbumScreen({
             {tiles.map((tile) => {
               const m = SRC_META[tile.key]!;
               const desc = tile.hint ?? (
-                tile.key === "carta" && cartasFound > 0 && cartasFound < CARTAS_MAX
-                  ? `${cartasFound}/${CARTAS_MAX} encontrados`
+                tile.key === "carta" && cartasFound > 0
+                  ? `${cartasFound} canjeado${cartasFound > 1 ? "s" : ""}`
                   : m.d
               );
               return (
@@ -1200,23 +1200,20 @@ interface PrizesScreenProps {
   prizes: ReinoPrize[];
   colgantesLeft: number;
   myColgantes: number;
-  doraLog: ReinoData["doraLog"];
+  golds: ReinoData["golds"];
 }
 
-function PrizesScreen({ prizes, colgantesLeft, myColgantes, doraLog }: PrizesScreenProps) {
+function PrizesScreen({ prizes, colgantesLeft, myColgantes, golds }: PrizesScreenProps) {
   const HOW: Record<string, string> = {
-    camara:        "1ª en completar el álbum",
-    funko_dante_1: "2ª en completar el álbum",
-    funko_dante_2: "3ª en completar el álbum",
-    minnie_1:      "4ª en completar el álbum",
-    minnie_2:      "5ª en completar el álbum",
-    minnie_3:      "6ª en completar el álbum",
+    camara:      "1ª en completar el álbum",
+    funko_dante: "2ª en completar el álbum",
+    minnie:      "3ª en completar el álbum",
   };
   return (
     <div className="fk-pad app">
-      <SectionHeader label="Premios · primeras 6 en completar" />
+      <SectionHeader label="Premios · primeras 3 en completar" />
       <div className="fk-card" style={{ padding: "6px 16px 16px" }}>
-        {prizes.map((p) => (
+        {prizes.map((p, i) => (
           <div key={p.key} className={`fk-req${p.winnerName ? " given" : ""}`}>
             {p.img ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -1226,7 +1223,7 @@ function PrizesScreen({ prizes, colgantesLeft, myColgantes, doraLog }: PrizesScr
             )}
             <div className="tx">
               <div className="a">
-                <b>{p.nm}</b>
+                <b>{i + 1}º · {p.nm}</b>
               </div>
               <div className="b">
                 {p.winnerName ? `✓ ${p.mine ? "¡Lo ganaste vos!" : `Ganado por ${p.winnerName}`}` : HOW[p.key]}
@@ -1244,9 +1241,9 @@ function PrizesScreen({ prizes, colgantesLeft, myColgantes, doraLog }: PrizesScr
         </div>
         <p className="fk-hint mt14">
           {SEC_TOTAL} colgantes RGB de Marti — para quienes completen el álbum{" "}
-          <b style={{ color: "var(--gold-1)" }}>después del 6to lugar</b>.
+          <b style={{ color: "var(--gold-1)" }}>del 4to lugar en adelante</b>.
         </p>
-        {myColgantes > 0 && <div className="fk-pill mt14">📿 Vos ya ganaste {myColgantes}</div>}
+        {myColgantes > 0 && <div className="fk-pill mt14">📿 ¡Ganaste un colgante RGB!</div>}
       </div>
 
       <SectionHeader label="Doradas · premios especiales" />
@@ -1254,21 +1251,23 @@ function PrizesScreen({ prizes, colgantesLeft, myColgantes, doraLog }: PrizesScr
         Cada dorada sale <b style={{ color: "var(--gold-1)" }}>una sola vez</b> y gana su premio.
       </p>
       <div className="fk-card" style={{ padding: "6px 16px 16px" }}>
-        {doraLog.length ? (
-          doraLog.map((e, i) => (
-            <div className={`fk-req${e.mine ? " mine" : ""}`} key={i}>
-              <div className="fg">✨</div>
-              <div className="tx">
-                <div className="a">
-                  <b>{e.mine ? "Vos" : e.name}</b> sacó la dorada <b>{e.goldNm}</b>
-                </div>
-                <div className="b">🎁 {e.goldPrize || "Premio especial"}</div>
+        {golds.map((gld) => (
+          <div className={`fk-req${gld.mine ? " mine" : ""}${gld.taken ? " given" : ""}`} key={gld.idx}>
+            <div className="fg" style={{ fontSize: 24 }}>{gld.g}</div>
+            <div className="tx">
+              <div className="a">
+                <b>🎁 {gld.prize || "Premio especial"}</b>
+              </div>
+              <div className="b">
+                Dorada <b>{gld.nm}</b>
+                {gld.taken
+                  ? ` · ✓ ${gld.mine ? "¡La sacaste vos!" : `la sacó ${gld.winnerName ?? "alguien"}`}`
+                  : " · todavía libre ✨"}
               </div>
             </div>
-          ))
-        ) : (
-          <p className="fk-hint">Todavía nadie sacó una dorada… puede ser tuya ✨</p>
-        )}
+            {gld.taken && <span className="chk">✓</span>}
+          </div>
+        ))}
       </div>
       <p className="fk-footnote">Los premios se retiran en el Mercadito del Reino</p>
     </div>
@@ -1554,28 +1553,45 @@ function IgSheet({ busy, onOk, onClose }: { busy: boolean; onOk: () => void; onC
 function CartaSheet({
   busy,
   cartasFound,
-  onOk,
+  onSubmit,
   onClose,
+  onToast,
 }: {
   busy: boolean;
   cartasFound: number;
-  onOk: () => void;
+  onSubmit: (code: string) => void;
   onClose: () => void;
+  onToast: (msg: string) => void;
 }) {
+  const [code, setCode] = useState("");
+  const handleSubmit = () => {
+    if (!code.trim()) return onToast("Tipeá el código del sobre escondido");
+    onSubmit(code);
+  };
   return (
     <div className="fk-modal-card">
-      <div className="fk-kicker">🃏 Sobres escondidos</div>
-      <p className="fk-lead mt14">
-        Hay sobres físicos escondidos por todo el salón. Cada uno trae figus adentro.
+      <div className="fk-kicker fk-center">🃏 Sobre escondido</div>
+      <p className="fk-hint fk-center mt8">
+        Buscá los sobres físicos escondidos por el salón. Cada uno trae un{" "}
+        <b style={{ color: "var(--gold-1)" }}>código</b> adentro: canjealo acá. Cada código sirve{" "}
+        <b style={{ color: "var(--gold-1)" }}>una sola vez</b>.
       </p>
-      <p className="fk-hint mt8">
-        Encontraste {cartasFound} de {CARTAS_MAX} posibles
-      </p>
-      <button className="fk-btn mt14" disabled={busy} onClick={onOk}>
-        ¡Encontré uno! Canjearlo
+      <input
+        className="fk-field mt14"
+        maxLength={12}
+        placeholder="CÓDIGO DEL SOBRE"
+        style={{ letterSpacing: ".3em", textTransform: "uppercase", fontSize: 20 }}
+        value={code}
+        onChange={(e) => setCode(e.target.value)}
+      />
+      <button className="fk-btn mt14" disabled={busy} onClick={handleSubmit}>
+        {busy ? "Verificando…" : "Canjear sobre"}
       </button>
+      {cartasFound > 0 && (
+        <p className="fk-hint fk-center mt8">Ya canjeaste {cartasFound} {cartasFound === 1 ? "sobre" : "sobres"} 🃏</p>
+      )}
       <button className="fk-btn ghost mt8" onClick={onClose}>
-        Sigo buscando
+        Cerrar
       </button>
     </div>
   );
@@ -1825,7 +1841,7 @@ function DoradaOverlay({ idx, onClose }: { idx: number; onClose: () => void }) {
           <CardImg id={16 + idx} alt={g.nm} />
         </div>
         <div className="fk-pill mt14" style={{ fontSize: 13, padding: "10px 18px" }}>
-          📿 ¡Te llevás un colgante RGB de Marti!
+          🎁 ¡Te llevás {g.prize}!
         </div>
         <p className="fk-hint mt8">Retiralo en el Mercadito del Reino</p>
         <button className="fk-btn mt20" style={{ maxWidth: 220 }} onClick={onClose}>
@@ -2015,7 +2031,7 @@ function CardDetailSheet({
       >
         ✕
       </button>
-      <div style={{ width: 160, height: 220, borderRadius: 12, overflow: "hidden", boxShadow: "0 4px 24px #0006" }}>
+      <div style={{ position: "relative", width: "min(62vw, 240px)", aspectRatio: "0.75", borderRadius: 14, overflow: "hidden", boxShadow: "0 4px 24px #0006" }}>
         {qty > 0 ? (
           <CardImg id={f.id} alt={f.nm} />
         ) : (
@@ -2087,11 +2103,9 @@ function Toast({ message, visible }: { message: string; visible: boolean }) {
 
 const PRIZE_NM: Record<string, string> = {
   camara: "Cámara Instantánea",
-  funko_dante_1: "Funko Pop Dante",
-  funko_dante_2: "Funko Pop Dante",
-  minnie_1: "Disney Minnie Combo × 3",
-  minnie_2: "Disney Minnie Combo × 3",
-  minnie_3: "Disney Minnie Combo × 3",
+  funko_dante: "Funko Pop Dante",
+  minnie: "Disney Minnie Combo × 3",
+  colgante: "Colgante RGB",
 };
 
 // Dato inicial resuelto en el server (SSR) y pasado por la page.
@@ -2310,7 +2324,9 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
   const done = uniques >= 15;
   const readyTokens = pendingPacks(core.packsRaw).filter((t) => t !== "start");
   const igUsed = usedPacks(core.packsRaw).includes("ig");
-  const cartasFound = core.packsRaw.filter((t) => t === "carta#2" || t === "used:carta").length;
+  const cartasFound = core.packsRaw.filter(
+    (t) => parseToken(t).key === "carta" || t === USED_PREFIX + "carta",
+  ).length;
 
   // ── tab switch (pull on enter) ──
   const handleTab = (t: Tab) => {
@@ -2484,9 +2500,8 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
         showToast(res.error ?? "Código incorrecto");
         return;
       }
-      const token = `codigo#${res.value}`;
       setCore((s) => ({ ...s, packsRaw: res.packsLeft }));
-      setSheet({ type: "pack", token });
+      setSheet({ type: "pack", token: res.token });
     } catch {
       showToast("Error de conexión, probá de nuevo");
     } finally {
@@ -2732,7 +2747,7 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
             prizes={reino?.prizes ?? []}
             colgantesLeft={reino?.colgantesLeft ?? SEC_TOTAL}
             myColgantes={reino?.myColgantes ?? 0}
-            doraLog={reino?.doraLog ?? []}
+            golds={reino?.golds ?? []}
           />
         )}
 
@@ -2800,8 +2815,9 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
           <CartaSheet
             busy={pending}
             cartasFound={cartasFound}
-            onOk={() => void grantAndOpen("carta")}
+            onSubmit={(code) => void handleSubmitCodigo(code)}
             onClose={() => setSheet({ type: "none" })}
+            onToast={showToast}
           />
         )}
         {sheet.type === "dorada" && <DoradaOverlay idx={sheet.idx} onClose={handleDoradaClose} />}

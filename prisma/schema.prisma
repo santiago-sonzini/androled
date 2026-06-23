@@ -193,6 +193,10 @@ model FigusCodigo {
   // (activeAt/durationSeconds = null → no caducan). Conviven varios a la vez.
   // Los códigos broadcast de /pantalla siguen con singleUse=false (multi-canje).
   singleUse       Boolean   @default(false)
+  // Qué tipo de sobre entrega el código: "codigo" = sobre de entrevista
+  // (token codigo#N), "carta" = sobre escondido (token carta#N, garantiza
+  // figus nuevas). Default "codigo" para no romper los códigos existentes.
+  packKind        String    @default("codigo")
   usedBy          String[]  @default([])
   createdAt       DateTime  @default(now())
 }

@@ -19,8 +19,10 @@ function randomCode(): string {
   return out
 }
 
+export type CodigoKind = "codigo" | "carta"
+
 type CrearResult =
-  | { ok: true; code: string; value: number }
+  | { ok: true; code: string; value: number; packKind: CodigoKind }
   | { ok: false; error: string }
 
 // ─────────────────────────────────────────────
@@ -34,8 +36,12 @@ type CrearResult =
 // code, active:true) nunca quede ambiguo.
 // ─────────────────────────────────────────────
 
-export async function crearCodigoEntrevista(value: number): Promise<CrearResult> {
+export async function crearCodigoEntrevista(
+  value: number,
+  packKind: CodigoKind = "codigo",
+): Promise<CrearResult> {
   const figus = Math.min(10, Math.max(1, Math.round(value) || 4))
+  const kind: CodigoKind = packKind === "carta" ? "carta" : "codigo"
 
   try {
     // Genera un código que no choque con ningún código activo (entrevista o
@@ -54,12 +60,13 @@ export async function crearCodigoEntrevista(value: number): Promise<CrearResult>
           value: figus,
           active: true,
           singleUse: true,
+          packKind: kind,
           // sin ventana: no caduca hasta que se canjee
           activeAt: null,
           durationSeconds: null,
         },
       })
-      return { ok: true, code, value: figus }
+      return { ok: true, code, value: figus, packKind: kind }
     }
     return { ok: false, error: "No se pudo generar un código libre, probá de nuevo" }
   } catch (err) {
@@ -72,6 +79,7 @@ export interface EntrevistaCodigo {
   id: string
   code: string
   value: number
+  packKind: CodigoKind
   redeemed: boolean
   redeemedByName: string | null
   createdAt: string
@@ -87,7 +95,7 @@ export async function loadEntrevista(): Promise<EntrevistaCodigo[]> {
     where: { eventId: EVENT_ID, singleUse: true },
     orderBy: { createdAt: "desc" },
     take: 40,
-    select: { id: true, code: true, value: true, usedBy: true, createdAt: true },
+    select: { id: true, code: true, value: true, packKind: true, usedBy: true, createdAt: true },
   })
 
   // Nombre del invitado que lo canjeó (usedBy[0], porque es de un solo uso).
@@ -108,6 +116,7 @@ export async function loadEntrevista(): Promise<EntrevistaCodigo[]> {
       id: c.id,
       code: c.code,
       value: c.value,
+      packKind: (c.packKind === "carta" ? "carta" : "codigo") as CodigoKind,
       redeemed: c.usedBy.length > 0,
       redeemedByName: redeemer ? nameById.get(redeemer) || "Invitado/a" : null,
       createdAt: c.createdAt.toISOString(),

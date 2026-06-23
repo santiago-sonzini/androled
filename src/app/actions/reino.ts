@@ -154,6 +154,22 @@ export async function loadReino(guestId: string) {
     ? giftDurationItem.total * 60_000
     : 600_000
 
+  // Colgantes RGB: para quienes completan el álbum pero NO ganan uno de los 3
+  // premios principales (del 4º en adelante en el flujo normal), hasta SEC_TOTAL.
+  // Se deriva de la MISMA fuente que los premios (FigusPrize) para no divergir
+  // si un premio se asignó a mano a alguien que no completó, o por filas viejas.
+  const mainPrizeWinnerIds = new Set(
+    prizes
+      .filter((p) => (PRIZE_KEYS as readonly string[]).includes(p.prizeKey) && p.winnerId)
+      .map((p) => p.winnerId as string),
+  )
+  const colganteWinners = albums
+    .filter((a) => a.completedAt != null && !mainPrizeWinnerIds.has(a.guestId))
+    .sort((x, y) => (x.completedAt?.getTime() ?? 0) - (y.completedAt?.getTime() ?? 0))
+    .slice(0, SEC_TOTAL)
+  const colgantesLeft = Math.max(0, SEC_TOTAL - colganteWinners.length)
+  const myColgantes = colganteWinners.some((a) => a.guestId === guestId) ? 1 : 0
+
   return {
     myCounts,
     myPacksLeft: me?.packsLeft ?? [],
@@ -163,8 +179,8 @@ export async function loadReino(guestId: string) {
     top,
     prizes: prizesOut,
     golds: goldsOut,
-    colgantesLeft: Math.max(0, SEC_TOTAL - claimedGolds.length),
-    myColgantes: claimedGolds.filter((g) => g.winnerId === guestId).length,
+    colgantesLeft,
+    myColgantes,
     doraLog,
     myRequest: myReqRow ? { id: myReqRow.id, figId: myReqRow.figId } : null,
     salonRequests,

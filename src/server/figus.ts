@@ -31,23 +31,18 @@ export const FIGUS_EVENT_ID = process.env.FIGUS_EVENT_ID ?? ""
 export const TOTAL_FIGS = 15
 export const SEC_TOTAL = 10 // colgantes RGB
 export const GOLD_COUNT = 3 // cartas doradas
-export const PRIZE_KEYS = [
-  "camara",
-  "funko_dante_1",
-  "funko_dante_2",
-  "minnie_1",
-  "minnie_2",
-  "minnie_3",
-] as const
+// Premios principales por ORDEN de completado del álbum: 1º cámara, 2º Funko
+// Dante, 3º Minnie Combo. Del 4º en adelante se gana un colgante RGB (ver
+// claimCompletion + SEC_TOTAL).
+export const PRIZE_KEYS = ["camara", "funko_dante", "minnie"] as const
 export const FEED_LIMIT = 30
 
 export const PRIZE_META: Record<string, { nm: string; g: string; img: string }> = {
-  camara:       { nm: "Cámara Instantánea",     g: "📷", img: "/prizes/camara.webp" },
-  funko_dante_1:{ nm: "Funko Pop Dante",         g: "💀", img: "/prizes/funko_dante.webp" },
-  funko_dante_2:{ nm: "Funko Pop Dante",         g: "💀", img: "/prizes/funko_dante.webp" },
-  minnie_1:     { nm: "Disney Minnie Combo × 3", g: "🎀", img: "/prizes/minnie_combo.webp" },
-  minnie_2:     { nm: "Disney Minnie Combo × 3", g: "🎀", img: "/prizes/minnie_combo.webp" },
-  minnie_3:     { nm: "Disney Minnie Combo × 3", g: "🎀", img: "/prizes/minnie_combo.webp" },
+  camara:      { nm: "Cámara Instantánea",     g: "📷", img: "/prizes/camara.webp" },
+  funko_dante: { nm: "Funko Pop Dante",         g: "💀", img: "/prizes/funko_dante.webp" },
+  minnie:      { nm: "Disney Minnie Combo × 3", g: "🎀", img: "/prizes/minnie_combo.webp" },
+  // Sentinel (NO es PRIZE_KEY): nombre para los mensajes del 4º en adelante.
+  colgante:    { nm: "Colgante RGB",            g: "📿", img: "" },
 }
 
 // Doradas (cartas 16/17/18).
@@ -113,8 +108,9 @@ export async function logEvent(kind: string, text: string, actorId?: string | nu
 }
 
 // Marca el álbum como completo (una sola vez) y reclama el próximo premio
-// disponible (1º cámara, 2º reloj, 3º peluche). Corre DENTRO de una
-// transacción del caller. Devuelve la prizeKey ganada o null.
+// disponible por orden de llegada (1º cámara, 2º Funko Dante, 3º Minnie). Del
+// 4º en adelante gana un colgante RGB (hasta SEC_TOTAL). Corre DENTRO de una
+// transacción del caller. Devuelve la prizeKey ganada, "colgante", o null.
 export async function claimCompletion(
   tx: Prisma.TransactionClient,
   guestId: string,
@@ -136,5 +132,11 @@ export async function claimCompletion(
     })
     if (claim.count > 0) return key
   }
-  return null // completó pero no quedan premios (4º en adelante)
+
+  // 4º en adelante: colgante RGB. El conteo real (quién/cuántos) se deriva del
+  // orden de completado en loadReino/loadAdmin; acá solo devolvemos el sentinel
+  // para el mensaje de completion, mientras queden colgantes.
+  const completedCount = await tx.figusAlbum.count({ where: { completedAt: { not: null } } })
+  if (completedCount - PRIZE_KEYS.length <= SEC_TOTAL) return "colgante"
+  return null // completó pero ya no quedan colgantes
 }

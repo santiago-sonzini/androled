@@ -383,7 +383,7 @@ export async function openPack(guestId: string, token: string) {
     const gm = GOLD_META[out.goldWon]
     await logEvent(
       "✨",
-      `<span class="r">¡${esc(name)} sacó una dorada!</span> ${gm?.nm ?? "Dorada"} ${gm?.g ?? "✨"} — colgante RGB 📿`,
+      `<span class="r">¡${esc(name)} sacó una dorada!</span> ${gm?.nm ?? "Dorada"} ${gm?.g ?? "✨"} — ¡ganó ${gm?.prize ?? "un premio especial"}! 🎁`,
       guestId,
     )
   }
@@ -441,9 +441,11 @@ export async function grantPack(guestId: string, kind: "carta" | "gift" | "ig") 
     return { ok: false as const, error: "Ya tenés tu sobre de Instagram" }
   }
   if (kind === "carta") {
-    // cartas otorgadas = pendientes (carta#2) + abiertas (marca used:carta)
+    // cartas otorgadas = pendientes (carta#N, no solo carta#2) + abiertas
+    // (marca used:carta). Contar por key parseada, no por el literal, porque
+    // los códigos de sobre escondido pueden valer carta#1/3/5/10.
     const granted = album.packsLeft.filter(
-      (t) => t === "carta#2" || t === USED_PREFIX + "carta",
+      (t) => parseToken(t).key === "carta" || t === USED_PREFIX + "carta",
     ).length
     if (granted >= MAX_CARTAS) {
       return { ok: false as const, error: "Ya encontraste todos los sobres escondidos" }
@@ -601,6 +603,8 @@ export async function redeemCodigo(guestId: string, code: string) {
   }
 
   const value = Math.min(10, Math.max(1, codigo.value || PACK_DEFAULT.codigo || 4))
+  // "carta" = sobre escondido (garantiza figus nuevas); "codigo" = entrevista.
+  const token = codigo.packKind === "carta" ? `carta#${value}` : `codigo#${value}`
 
   // Claim atómico + entrega del sobre en UNA transacción. El claim
   // (updateMany NOT usedBy has) gana solo si dos requests no compiten;
@@ -618,7 +622,7 @@ export async function redeemCodigo(guestId: string, code: string) {
     if (claim.count === 0) return null
     const updated = await tx.figusAlbum.update({
       where: { guestId },
-      data: { packsLeft: { push: `codigo#${value}` } },
+      data: { packsLeft: { push: token } },
       select: { packsLeft: true },
     })
     return updated.packsLeft
@@ -632,7 +636,7 @@ export async function redeemCodigo(guestId: string, code: string) {
   }
 
   revalidatePath(`/${guestId}`)
-  return { valid: true as const, value, packsLeft }
+  return { valid: true as const, value, token, packsLeft }
 }
 
 // Wrapper de compatibilidad (no usar en código nuevo).

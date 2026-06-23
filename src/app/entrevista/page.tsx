@@ -7,6 +7,7 @@ import {
   loadEntrevista,
   cancelarCodigoEntrevista,
   type EntrevistaCodigo,
+  type CodigoKind,
 } from "../actions/entrevista";
 
 // ── supabase realtime (señal de invalidación, igual que admin-reino) ──
@@ -21,7 +22,12 @@ function getSupabase(): SupabaseClient | null {
 }
 
 // Figus que da el sobre. Espejo de los valores típicos de entrevista (+1/+3/+5/+10).
-const VALUES = [1, 3, 5, 10];
+const VALUES = [1, 2, 3, 5, 10];
+
+const KINDS: { k: CodigoKind; ic: string; label: string }[] = [
+  { k: "codigo", ic: "🎤", label: "Entrevista" },
+  { k: "carta", ic: "🃏", label: "Sobre escondido" },
+];
 
 // El layout raíz importa [id]/styles.css globalmente (body { cursor: none }).
 // Acá no hay cursor custom → lo restauramos en .ent-wrap.
@@ -60,8 +66,9 @@ const CSS = `
 
 export default function EntrevistaPage() {
   const [value, setValue] = useState(5);
+  const [kind, setKind] = useState<CodigoKind>("codigo");
   const [codes, setCodes] = useState<EntrevistaCodigo[]>([]);
-  const [last, setLast] = useState<{ code: string; value: number } | null>(null);
+  const [last, setLast] = useState<{ code: string; value: number; packKind: CodigoKind } | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const msgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -114,9 +121,9 @@ export default function EntrevistaPage() {
     if (busy) return;
     setBusy(true);
     try {
-      const r = await crearCodigoEntrevista(value);
+      const r = await crearCodigoEntrevista(value, kind);
       if (r.ok) {
-        setLast({ code: r.code, value: r.value });
+        setLast({ code: r.code, value: r.value, packKind: r.packKind });
         setMsg(null);
         void refresh();
       } else {
@@ -141,13 +148,25 @@ export default function EntrevistaPage() {
   return (
     <div className="ent-wrap">
       <div className="ent-in">
-        <div className="ent-kick">Figus del Reino · Entrevistas</div>
+        <div className="ent-kick">Figus del Reino · Códigos</div>
         <h1 className="ent-h1">Generá un código</h1>
         <p className="ent-sub">
-          Elegí cuántas figus da el sobre y generá un código único. Decíselo al invitado: lo canjea
-          en su app, en <b>“Código de entrevista”</b>. Cada código sirve <b>una sola vez</b> y no
-          caduca.
+          Elegí el tipo de sobre y cuántas figus da. Generá un código único y decíselo al invitado:
+          lo canjea en su app. Cada código sirve <b>una sola vez</b> y no caduca.
         </p>
+
+        <div className="ent-vals">
+          {KINDS.map((kk) => (
+            <button
+              key={kk.k}
+              className={`ent-chip${kind === kk.k ? " act" : ""}`}
+              style={{ fontSize: 15 }}
+              onClick={() => setKind(kk.k)}
+            >
+              {kk.ic} {kk.label}
+            </button>
+          ))}
+        </div>
 
         <div className="ent-vals">
           {VALUES.map((v) => (
@@ -162,15 +181,21 @@ export default function EntrevistaPage() {
         </div>
 
         <button className="ent-gen" disabled={busy} onClick={() => void generar()}>
-          {busy ? "Generando…" : `🎟️ Generar código (+${value} figus)`}
+          {busy
+            ? "Generando…"
+            : `${kind === "carta" ? "🃏" : "🎟️"} Generar código (+${value} figus)`}
         </button>
         {msg && <div className="ent-msg err">{msg}</div>}
 
         {last && (
           <div className="ent-big">
-            <div className="ent-big-l">Código para el invitado</div>
+            <div className="ent-big-l">
+              {last.packKind === "carta" ? "Código de sobre escondido" : "Código para el invitado"}
+            </div>
             <div className="ent-code">{last.code}</div>
-            <div className="ent-big-v">vale +{last.value} figus · un solo uso</div>
+            <div className="ent-big-v">
+              {last.packKind === "carta" ? "🃏 sobre escondido · " : ""}vale +{last.value} figus · un solo uso
+            </div>
           </div>
         )}
 
@@ -182,7 +207,9 @@ export default function EntrevistaPage() {
             <div className={`ent-row${c.redeemed ? " done" : ""}`} key={c.id}>
               <div className="ent-row-code">{c.code}</div>
               <div className="ent-row-info">
-                <div className="ent-row-v">+{c.value} figus</div>
+                <div className="ent-row-v">
+                  {c.packKind === "carta" ? "🃏 " : "🎤 "}+{c.value} figus
+                </div>
                 <div className="ent-row-s">
                   {c.redeemed ? `✓ Canjeado por ${c.redeemedByName}` : "⏳ Sin canjear"}
                 </div>
