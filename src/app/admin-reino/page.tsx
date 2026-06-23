@@ -12,7 +12,7 @@ import {
   deleteInventoryItem,
   giveGiftToGuest,
 } from "../actions/admin";
-import { lanzarTrivia, lanzarCodigo } from "../actions/pantalla";
+import { lanzarCodigo } from "../actions/pantalla";
 
 // ── supabase realtime (señal de invalidación) ──
 let _sb: SupabaseClient | null = null;
@@ -55,7 +55,10 @@ function Face({ g, size }: { g: { avatar: string | null; selfie: string | null }
 }
 
 const CSS = `
-.ar-wrap { min-height: 100vh; background: linear-gradient(180deg,#150f33,#0c0920); color: #f6f0e6; font-family: 'Mulish',system-ui,sans-serif; padding: 18px 16px 80px; }
+/* El layout raíz importa [id]/styles.css globalmente, que pone cursor:none en
+   body (el juego/landing usan un cursor custom). Acá NO hay cursor custom, así
+   que restauramos el nativo en todo el panel. */
+.ar-wrap { min-height: 100vh; background: linear-gradient(180deg,#150f33,#0c0920); color: #f6f0e6; font-family: 'Mulish',system-ui,sans-serif; padding: 18px 16px 80px; cursor: auto; }
 .ar-in { max-width: 920px; margin: 0 auto; }
 .ar-top { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
 .ar-top h1 { font-size: 22px; font-weight: 900; margin: 0; }
@@ -310,10 +313,9 @@ export default function AdminReinoPage() {
         <div className="ar-card">
           <div className="info">
             <div className="t">Lanzar a la pantalla</div>
-            <div className="s">Activa una trivia o un código para que los invitados ganen un sobre.</div>
+            <div className="s">Activá un código para que los invitados ganen un sobre.</div>
           </div>
           <div className="ar-row">
-            <button className="ar-btn sm ghost" disabled={busy} onClick={() => void run(() => lanzarTrivia(), "💡 Trivia lanzada")}>💡 Lanzar trivia</button>
             <input className="ar-input" style={{ width: 64 }} inputMode="numeric" value={codeVal} onChange={(e) => setCodeVal(e.target.value)} title="figus que da el código" />
             <button className="ar-btn sm" disabled={busy} onClick={() => void run(async () => { const r = await lanzarCodigo(45, parseInt(codeVal) || 4); toast(r.ok ? `🔢 ${r.label}` : r.error); return r; })}>🔢 Lanzar código</button>
           </div>

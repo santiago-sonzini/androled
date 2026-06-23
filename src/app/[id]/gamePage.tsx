@@ -7,8 +7,6 @@ import {
   openPack,
   grantPack,
   redeemCodigo,
-  checkTrivia,
-  answerTrivia,
   saveAlbumState,
   saveGuestProfile,
 } from "../actions/album";
@@ -94,12 +92,6 @@ interface Local {
   gift: number | null;
 }
 
-interface TriviaData {
-  id: string;
-  question: string;
-  options: string[];
-}
-
 type SheetMode =
   | { type: "none" }
   | { type: "pack"; token: string }
@@ -111,7 +103,6 @@ type SheetMode =
       prizeNm: string | null;
     }
   | { type: "codigo-entry" }
-  | { type: "trivia"; trivia: TriviaData }
   | { type: "ig" }
   | { type: "carta" }
   | { type: "dorada"; idx: number }
@@ -222,7 +213,6 @@ const AVATARS: Avatar[] = [
 const SRC_META: Record<string, { ic: string; t: string; d: string }> = {
   start: { ic: "🎁", t: "Sobre de bienvenida", d: "Tu sobre al entrar" },
   codigo: { ic: "🎤", t: "Código de entrevista", d: "+1 a +10 figus · entrevistas y sorpresas" },
-  trivia: { ic: "💡", t: "Trivia Disney", d: "Ganá la pregunta de la pantalla" },
   carta: { ic: "🃏", t: "Sobre escondido", d: "Buscalos por el salón · +2 c/u" },
   ig: { ic: "📸", t: "Seguinos en IG", d: "@andro.show · +1 figu" },
   gift: { ic: "🎁", t: "Sobre de regalo", d: "Cae desde el Reino" },
@@ -923,7 +913,6 @@ interface AlbumScreenProps {
   readyTokens: string[];
   cartasFound: number;
   igUsed: boolean;
-  triviaUsed: boolean;
   onOpenToken: (token: string) => void;
   onSource: (key: string) => void;
   onOpenTrade: () => void;
@@ -936,7 +925,6 @@ function AlbumScreen({
   readyTokens,
   cartasFound,
   igUsed,
-  triviaUsed,
   onOpenToken,
   onSource,
   onOpenTrade,
@@ -947,7 +935,6 @@ function AlbumScreen({
 
   const tiles: { key: string; ready?: string; spent?: boolean }[] = [
     { key: "codigo" },
-    { key: "trivia", spent: triviaUsed },
     { key: "carta", spent: cartasFound >= CARTAS_MAX },
     { key: "ig", spent: igUsed },
   ];
@@ -990,8 +977,8 @@ function AlbumScreen({
         <>
           <SectionHeader label="Conseguir sobres" />
           <p className="fk-hint fk-center">
-            Canjeá <b style={{ color: "var(--ink)" }}>códigos de las entrevistas</b>, ganá la trivia
-            o encontrá los <b style={{ color: "var(--ink)" }}>sobres escondidos</b> por el salón.
+            Canjeá <b style={{ color: "var(--ink)" }}>códigos de las entrevistas</b> o encontrá los{" "}
+            <b style={{ color: "var(--ink)" }}>sobres escondidos</b> por el salón.
           </p>
           <div className="fk-src-row">
             {tiles.map((tile) => {
@@ -1501,42 +1488,6 @@ function CodigoEntrySheet({
         {busy ? "Verificando…" : "Canjear"}
       </button>
       <button className="fk-btn ghost mt8" onClick={onClose}>
-        Cerrar
-      </button>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────
-// TRIVIA SHEET
-// ─────────────────────────────────────────────
-
-function TriviaSheet({
-  trivia,
-  busy,
-  onAnswer,
-  onClose,
-}: {
-  trivia: TriviaData;
-  busy: boolean;
-  onAnswer: (i: number) => void;
-  onClose: () => void;
-}) {
-  return (
-    <div className="fk-modal-card">
-      <div className="fk-kicker fk-center">💡 Trivia Disney</div>
-      <h2
-        className="fk-serif fk-center"
-        style={{ margin: "10px 0 14px", fontSize: 22, color: "#fff", lineHeight: 1.2 }}
-      >
-        {trivia.question}
-      </h2>
-      {trivia.options.map((opt, i) => (
-        <button key={i} className="fk-btn ghost mt8" disabled={busy} onClick={() => onAnswer(i)}>
-          {opt}
-        </button>
-      ))}
-      <button className="fk-btn ghost mt14" style={{ opacity: 0.6 }} onClick={onClose}>
         Cerrar
       </button>
     </div>
@@ -2260,7 +2211,6 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
   const uniques = FIGS.filter((f) => (core.counts[f.id] || 0) > 0).length;
   const done = uniques >= 15;
   const readyTokens = pendingPacks(core.packsRaw).filter((t) => t !== "start");
-  const triviaUsed = usedPacks(core.packsRaw).includes("trivia");
   const igUsed = usedPacks(core.packsRaw).includes("ig");
   const cartasFound = core.packsRaw.filter((t) => t === "carta#2" || t === "used:carta").length;
 
@@ -2341,7 +2291,12 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
       }
       if (!("drawnIds" in res)) return;
 
-      const prev = { ...core.counts };
+      // "Nueva vs repetida" se decide contra el snapshot PREVIO al sobre que
+      // manda el server (res.before). NO usar core.counts: el sobre se
+      // pre-abre (prefetch) y persiste antes del tap, así que un resync
+      // (realtime de mi fila / pull) puede haber metido estas mismas figus en
+      // core.counts → todo se marcaría "repetida". res.before es inmune a eso.
+      const prev: Record<number, number> = { ...(res.before ?? core.counts) };
       const cards = (res.drawnIds ?? []).map((id) => {
         const f = fig(id);
         const before = prev[id] || 0;
@@ -2399,7 +2354,6 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
   // ── sources ──
   const handleSource = (key: string) => {
     if (key === "codigo") return setSheet({ type: "codigo-entry" });
-    if (key === "trivia") return void handleStartTrivia();
     if (key === "ig") return setSheet({ type: "ig" });
     if (key === "carta") return setSheet({ type: "carta" });
   };
@@ -2435,56 +2389,6 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
       const token = `codigo#${res.value}`;
       setCore((s) => ({ ...s, packsRaw: res.packsLeft }));
       setSheet({ type: "pack", token });
-    } catch {
-      showToast("Error de conexión, probá de nuevo");
-    } finally {
-      setPending(false);
-    }
-  };
-
-  const handleStartTrivia = async () => {
-    if (pending) return;
-    setPending(true);
-    try {
-      const res = await checkTrivia(guestId);
-      if (!res.available || !("trivia" in res) || !res.trivia) {
-        const reason = "reason" in res ? res.reason : undefined;
-        showToast(
-          reason === "not_yet"
-            ? "La trivia todavía no empezó ⏳"
-            : reason === "expired"
-              ? "La trivia ya terminó 😅"
-              : reason === "already_used"
-                ? "Ya jugaste esta trivia"
-                : reason === "already_won"
-                  ? "Ya ganaste este sobre — abrilo desde el álbum"
-                  : "No hay trivia activa ahora",
-        );
-        return;
-      }
-      setSheet({
-        type: "trivia",
-        trivia: { id: res.trivia.id, question: res.trivia.question, options: res.trivia.options },
-      });
-    } catch {
-      showToast("Error de conexión, probá de nuevo");
-    } finally {
-      setPending(false);
-    }
-  };
-
-  const handleAnswerTrivia = async (triviaId: string, answerIndex: number) => {
-    if (pending) return;
-    setPending(true);
-    try {
-      const res = await answerTrivia(guestId, triviaId, answerIndex);
-      if (!res.correct) {
-        showToast(res.error ?? "Respuesta incorrecta 😅");
-        setSheet({ type: "none" });
-        return;
-      }
-      setCore((s) => ({ ...s, packsRaw: res.packsLeft }));
-      setSheet({ type: "pack", token: "trivia" });
     } catch {
       showToast("Error de conexión, probá de nuevo");
     } finally {
@@ -2669,7 +2573,6 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
             readyTokens={readyTokens}
             cartasFound={cartasFound}
             igUsed={igUsed}
-            triviaUsed={triviaUsed}
             onOpenToken={(token) => setSheet({ type: "pack", token })}
             onSource={handleSource}
             onOpenTrade={() => handleTab("trade")}
@@ -2755,14 +2658,6 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
             onSubmit={(code) => void handleSubmitCodigo(code)}
             onClose={() => setSheet({ type: "none" })}
             onToast={showToast}
-          />
-        )}
-        {sheet.type === "trivia" && (
-          <TriviaSheet
-            trivia={sheet.trivia}
-            busy={pending}
-            onAnswer={(i) => void handleAnswerTrivia(sheet.trivia.id, i)}
-            onClose={() => setSheet({ type: "none" })}
           />
         )}
         {sheet.type === "ig" && (

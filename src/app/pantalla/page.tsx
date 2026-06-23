@@ -5,7 +5,6 @@ import { QRCodeSVG } from "qrcode.react";
 import { createId } from "@paralleldrive/cuid2";
 import {
   loadPantalla,
-  lanzarTrivia,
   lanzarCodigo,
   type PantallaData,
 } from "../actions/pantalla";
@@ -617,7 +616,7 @@ export default function PantallaSalon() {
     [],
   );
 
-  // ── Lanzar trivia / código desde la barra de control ──
+  // ── Lanzar código desde la barra de control (la trivia fue eliminada) ──
   const showLaunchMsg = useCallback((text: string, err: boolean) => {
     setLaunchMsg({ text, err });
     if (launchMsgTimer.current) clearTimeout(launchMsgTimer.current);
@@ -625,12 +624,11 @@ export default function PantallaSalon() {
   }, []);
 
   const handleLaunch = useCallback(
-    async (kind: "trivia" | "codigo") => {
+    async (kind: "codigo") => {
       if (launching) return;
       setLaunching(kind);
       try {
-        const res =
-          kind === "trivia" ? await lanzarTrivia() : await lanzarCodigo();
+        const res = await lanzarCodigo();
         if (!res.ok) {
           showLaunchMsg(res.error, true);
           return;
@@ -639,10 +637,7 @@ export default function PantallaSalon() {
         // y refrescar ya (sin esperar al evento realtime)
         setManual("auto");
         refreshDebounced();
-        showLaunchMsg(
-          kind === "trivia" ? "💡 Trivia lanzada" : `🔢 Código: ${res.label}`,
-          false,
-        );
+        showLaunchMsg(`🔢 Código: ${res.label}`, false);
       } catch {
         showLaunchMsg("Error de conexión", true);
       } finally {
@@ -909,7 +904,6 @@ export default function PantallaSalon() {
           {(
             [
               ["ambient", "Ambiente"],
-              ["trivia", "Trivia"],
               ["code", "Código"],
               ["dorada", "Dorada 🕛"],
               ["take", "Completó 📷"],
@@ -926,13 +920,6 @@ export default function PantallaSalon() {
           ))}
           <span className="sep" />
           <span className="hint">LANZAR ·</span>
-          <button
-            className="launch"
-            disabled={launching !== null}
-            onClick={() => void handleLaunch("trivia")}
-          >
-            {launching === "trivia" ? "Lanzando…" : "💡 Trivia (30s)"}
-          </button>
           <button
             className="launch"
             disabled={launching !== null}

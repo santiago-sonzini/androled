@@ -322,7 +322,7 @@ export async function openPack(guestId: string, token: string) {
       (id, i) => (before[id] || 0) === 0 && drawnIds.indexOf(id) === i,
     ).length
 
-    return { drawnIds, counts, packsLeft: newPacksLeft, goldWon, prize, newCount }
+    return { drawnIds, counts, before, packsLeft: newPacksLeft, goldWon, prize, newCount }
   })
 
   if ("error" in out) return { error: out.error }
@@ -356,6 +356,10 @@ export async function openPack(guestId: string, token: string) {
   return {
     drawnIds: out.drawnIds,
     counts: out.counts,
+    // Snapshot de counts PREVIO al sobre: es la base para que el cliente
+    // decida "nueva vs repetida" sin depender de su core.counts (que un
+    // resync —realtime/pull— pudo haber ya actualizado con este mismo sobre).
+    before: out.before,
     packsLeft: out.packsLeft,
     goldWon: out.goldWon,
     prize: out.prize,
@@ -543,6 +547,10 @@ export async function redeemCodigo(guestId: string, code: string) {
     if (now > expiresAt) return { valid: false as const, error: "Código expirado" }
   }
 
+  // Código de entrevista (un solo uso): si ya lo canjeó alguien, está quemado.
+  if (codigo.singleUse && codigo.usedBy.length > 0) {
+    return { valid: false as const, error: "Este código ya fue usado" }
+  }
   if (codigo.usedBy.includes(guestId)) {
     return { valid: false as const, error: "Ya usaste este código" }
   }
@@ -554,8 +562,12 @@ export async function redeemCodigo(guestId: string, code: string) {
   // y si el push del token falla, la transacción revierte el claim, así
   // el código nunca queda consumido sin haber entregado el sobre.
   const packsLeft = await db.$transaction(async (tx) => {
+    // Single-use: gana el primer canje (usedBy vacío). Multi (broadcast): gana
+    // mientras este guest no lo haya usado. Ambos atómicos vía updateMany.
     const claim = await tx.figusCodigo.updateMany({
-      where: { id: codigo.id, NOT: { usedBy: { has: guestId } } },
+      where: codigo.singleUse
+        ? { id: codigo.id, usedBy: { isEmpty: true } }
+        : { id: codigo.id, NOT: { usedBy: { has: guestId } } },
       data: { usedBy: { push: guestId } },
     })
     if (claim.count === 0) return null
@@ -568,7 +580,10 @@ export async function redeemCodigo(guestId: string, code: string) {
   })
 
   if (!packsLeft) {
-    return { valid: false as const, error: "Ya usaste este código" }
+    return {
+      valid: false as const,
+      error: codigo.singleUse ? "Este código ya fue usado" : "Ya usaste este código",
+    }
   }
 
   revalidatePath(`/${guestId}`)

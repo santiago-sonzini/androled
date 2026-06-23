@@ -189,6 +189,10 @@ model FigusCodigo {
   active          Boolean   @default(false)
   activeAt        DateTime?
   durationSeconds Int?
+  // Códigos de entrevista: un solo canje (se "queman" al usarse) y sin ventana
+  // (activeAt/durationSeconds = null → no caducan). Conviven varios a la vez.
+  // Los códigos broadcast de /pantalla siguen con singleUse=false (multi-canje).
+  singleUse       Boolean   @default(false)
   usedBy          String[]  @default([])
   createdAt       DateTime  @default(now())
 }
