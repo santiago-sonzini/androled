@@ -942,11 +942,11 @@ function AlbumScreen({
   const needCount = 15 - uniques;
   const giftMinutes = Math.round(giftDurationMs / 60_000);
 
-  const tiles: { key: string; ready?: string; spent?: boolean; hint?: string; action?: string }[] = [
+  const tiles: { key: string; ready?: string; spent?: boolean; hint?: string }[] = [
     { key: "codigo" },
     { key: "carta" },
     { key: "ig", spent: igUsed },
-    { key: "gift", hint: `⏱️ Cada ${giftMinutes} min · toca en Cuenta`, action: "account" },
+    { key: "gift", hint: `⏱️ ${giftMinutes} min · tocá para activar` },
   ];
 
   return (
@@ -1900,9 +1900,6 @@ function CompletionOverlay({
             👑 Reino completo — pasá por el Mercadito
           </div>
         )}
-        <div className="fk-pill mt8" style={{ fontSize: 12.5, padding: "9px 16px" }}>
-          🎁 Tu sobre de regalo ya está en camino
-        </div>
         <p className="fk-lead mt14" style={{ maxWidth: 280, marginInline: "auto" }}>
           Pasá por el <b style={{ color: "var(--gold-1)" }}>Mercadito del Reino</b>: Marti te entrega
           la carta en mano.
@@ -2162,19 +2159,6 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
   const completionPendingRef = useRef(false);
   const pendingCompletionPrizeRef = useRef<string | null>(null);
 
-  // El sobre de regalo arranca solo cuando el invitado completa el álbum (una
-  // sola vez). `giftStartedRef` se hidrata del estado guardado para no re-armarlo
-  // en cada refresh ni tras recargar. `giftDurationRef` espeja la duración para
-  // leerla fresca dentro de refreshReino sin meterla en sus deps.
-  const giftStartedRef = useRef<boolean>(
-    Boolean((profile?.album.state as { giftStarted?: boolean } | undefined)?.giftStarted),
-  );
-  const giftDurationRef = useRef<number>(giftDurationMs);
-  giftDurationRef.current = giftDurationMs;
-  // espejo de local.gift para leerlo sincrónicamente al armar (sin deps).
-  const localGiftRef = useRef<number | null>(local.gift);
-  localGiftRef.current = local.gift;
-
   // ── inyectar CSS una vez ──
   useEffect(() => {
     const id = "fk-styles";
@@ -2225,19 +2209,6 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
         setUnread(idx < 0 ? r.feed.length : idx);
       }
 
-      // Al completar el álbum: arrancar el sobre de regalo automático (una sola
-      // vez), persistido. Cubre tanto completar en vivo como ya-completo-al-cargar.
-      if (r.completed && !giftStartedRef.current) {
-        giftStartedRef.current = true;
-        // si ya había un gift en curso, mantenerlo; si no, armar uno nuevo.
-        const gift = localGiftRef.current ?? Date.now() + giftDurationRef.current;
-        if (localGiftRef.current == null) setLocal({ gift });
-        // persistir giftStarted YA, sin depender de que local.gift cambie (si el
-        // gift ya estaba en curso, setLocal sería no-op y el effect no correría).
-        void saveAlbumState(guestId, { state: { gift, giftStarted: true } });
-        showToast("🎁 ¡Completaste el álbum! Tu sobre de regalo está llegando 👇");
-      }
-
       if (r.completed && !completionShownRef.current) {
         if (reinoFirstRef.current) {
           // ya estaba completo al cargar: no re-mostrar el overlay (el álbum
@@ -2259,7 +2230,7 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
     } catch {
       /* la próxima sync / evento realtime reintenta */
     }
-  }, [guestId, showToast]);
+  }, [guestId]);
 
   // ── carga inicial liviana: el perfil + counts ya vienen del server, así que
   //    acá solo el sobre regalo pendiente (necesita Date.now, client-only) y
@@ -2299,12 +2270,11 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
     };
   }, [guestId, refreshReino]);
 
-  // ── persistir el contador del sobre regalo (+ la marca de que ya se armó por
-  //    completar, para no re-armarlo cuando `gift` vuelve a null al abrirlo) ──
+  // ── persistir el contador del sobre regalo (sobrevive al reload) ──
   useEffect(() => {
     if (!hydratedRef.current) return;
     const t = setTimeout(() => {
-      void saveAlbumState(guestId, { state: { gift: local.gift, giftStarted: giftStartedRef.current } });
+      void saveAlbumState(guestId, { state: { gift: local.gift } });
     }, 600);
     return () => clearTimeout(t);
   }, [local.gift, guestId]);
@@ -2492,10 +2462,23 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
   };
 
   // ── sources ──
+  // Arranca el contador del sobre de regalo desde la main screen (tile "Sobre
+  // de regalo" en "Conseguir sobres"). Se persiste y sobrevive al reload.
+  const handleStartGift = () => {
+    const giftPending = pendingPacks(core.packsRaw).some((t) => parseToken(t).key === "gift");
+    if (local.gift || giftPending) {
+      showToast("Ya tenés un sobre regalo en camino 🎁");
+      return;
+    }
+    setLocal({ gift: Date.now() + giftDurationMs });
+    showToast("🎁 Tu sobre de regalo está llegando — mirá el contador 👇");
+  };
+
   const handleSource = (key: string) => {
     if (key === "codigo") return setSheet({ type: "codigo-entry" });
     if (key === "ig") return setSheet({ type: "ig" });
     if (key === "carta") return setSheet({ type: "carta" });
+    if (key === "gift") return handleStartGift();
   };
 
   const grantAndOpen = async (kind: "carta" | "ig") => {
