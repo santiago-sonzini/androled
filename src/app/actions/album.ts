@@ -289,8 +289,12 @@ export async function openPack(guestId: string, token: string) {
       }
     }
 
-    const before = parseCounts(album.counts)
-    const counts = parseCounts(album.counts)
+    // Clonar ambos: parseCounts NO clona (devuelve la misma ref del blob JSON),
+    // así que sin el spread `before` y `counts` serían el MISMO objeto y el loop
+    // que incrementa `counts` ensuciaría `before` → todo saldría "repetida" y el
+    // feed diría "0 nuevas".
+    const before = { ...parseCounts(album.counts) }
+    const counts = { ...parseCounts(album.counts) }
 
     const stocks = await tx.figusCardStock.findMany({
       where: { eventId: EVENT_ID },

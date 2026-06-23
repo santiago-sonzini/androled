@@ -553,9 +553,10 @@ body {
 .fk-lb.done .bar i { background: var(--green); }
 
 /* ── gift bar ── */
-.fk-giftbar { position: absolute; left: 50%; bottom: 140px; transform: translateX(-50%); z-index: 20; background: linear-gradient(180deg, var(--gold-1), var(--gold-2)); color: #2a1c08; font-weight: 800; font-size: 12.5px; padding: 11px 18px; border-radius: 99px; box-shadow: 0 10px 30px rgba(227,184,95,.45), inset 0 1px 0 rgba(255,255,255,.55); cursor: pointer; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.fk-giftbar { position: absolute; left: 50%; bottom: 140px; transform: translateX(-50%); z-index: 20; background: linear-gradient(180deg, var(--gold-1), var(--gold-2)); color: #2a1c08; font-weight: 800; font-size: 12.5px; padding: 11px 18px; border-radius: 99px; box-shadow: 0 10px 30px rgba(227,184,95,.45), inset 0 1px 0 rgba(255,255,255,.55); cursor: pointer; display: flex; align-items: center; gap: 6px; white-space: nowrap; animation: fk-giftin .55s cubic-bezier(.2,.9,.3,1.3) both; }
 .fk-giftbar.ready { animation: fk-giftbeat 1.2s infinite; }
 @keyframes fk-giftbeat { 0%,100% { transform: translateX(-50%) scale(1); } 50% { transform: translateX(-50%) scale(1.07); } }
+@keyframes fk-giftin { 0% { opacity: 0; transform: translateX(-50%) translateY(22px) scale(.85); } 60% { transform: translateX(-50%) translateY(-4px) scale(1.06); } 100% { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); } }
 
 /* ── reveal de a una: carta grande con flip (estilo martireino) ── */
 .fk-stage { display: flex; flex-direction: column; align-items: center; gap: 14px; width: 100%; }
@@ -1349,7 +1350,6 @@ interface AccountScreenProps {
   colgantes: number;
   tradeCode: string;
   onEdit: () => void;
-  onSimGift: () => void;
 }
 
 function AccountScreen({
@@ -1363,7 +1363,6 @@ function AccountScreen({
   colgantes,
   tradeCode,
   onEdit,
-  onSimGift,
 }: AccountScreenProps) {
   const u = FIGS.filter((f) => (counts[f.id] || 0) > 0).length;
   const reps = FIGS.reduce((a, f) => a + Math.max(0, (counts[f.id] || 0) - 1), 0);
@@ -1437,9 +1436,6 @@ function AccountScreen({
       <SectionHeader label="Opciones" />
       <button className="fk-btn ghost" onClick={onEdit}>
         ✏️ Cambiar nombre o personaje
-      </button>
-      <button className="fk-btn ghost mt8" onClick={onSimGift}>
-        🛰️ Recibir un sobre regalo
       </button>
       <p className="fk-footnote">Tu pulsera es tu cuenta · el progreso queda guardado</p>
     </div>
@@ -1904,6 +1900,9 @@ function CompletionOverlay({
             👑 Reino completo — pasá por el Mercadito
           </div>
         )}
+        <div className="fk-pill mt8" style={{ fontSize: 12.5, padding: "9px 16px" }}>
+          🎁 Tu sobre de regalo ya está en camino
+        </div>
         <p className="fk-lead mt14" style={{ maxWidth: 280, marginInline: "auto" }}>
           Pasá por el <b style={{ color: "var(--gold-1)" }}>Mercadito del Reino</b>: Marti te entrega
           la carta en mano.
@@ -2031,7 +2030,7 @@ function CardDetailSheet({
       >
         ✕
       </button>
-      <div style={{ position: "relative", width: "min(62vw, 240px)", aspectRatio: "0.75", borderRadius: 14, overflow: "hidden", boxShadow: "0 4px 24px #0006" }}>
+      <div style={{ position: "relative", width: "min(62vw, 240px)", aspectRatio: "0.75", margin: "0 auto", borderRadius: 14, overflow: "hidden", boxShadow: "0 4px 24px #0006" }}>
         {qty > 0 ? (
           <CardImg id={f.id} alt={f.nm} />
         ) : (
@@ -2163,6 +2162,19 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
   const completionPendingRef = useRef(false);
   const pendingCompletionPrizeRef = useRef<string | null>(null);
 
+  // El sobre de regalo arranca solo cuando el invitado completa el álbum (una
+  // sola vez). `giftStartedRef` se hidrata del estado guardado para no re-armarlo
+  // en cada refresh ni tras recargar. `giftDurationRef` espeja la duración para
+  // leerla fresca dentro de refreshReino sin meterla en sus deps.
+  const giftStartedRef = useRef<boolean>(
+    Boolean((profile?.album.state as { giftStarted?: boolean } | undefined)?.giftStarted),
+  );
+  const giftDurationRef = useRef<number>(giftDurationMs);
+  giftDurationRef.current = giftDurationMs;
+  // espejo de local.gift para leerlo sincrónicamente al armar (sin deps).
+  const localGiftRef = useRef<number | null>(local.gift);
+  localGiftRef.current = local.gift;
+
   // ── inyectar CSS una vez ──
   useEffect(() => {
     const id = "fk-styles";
@@ -2213,6 +2225,19 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
         setUnread(idx < 0 ? r.feed.length : idx);
       }
 
+      // Al completar el álbum: arrancar el sobre de regalo automático (una sola
+      // vez), persistido. Cubre tanto completar en vivo como ya-completo-al-cargar.
+      if (r.completed && !giftStartedRef.current) {
+        giftStartedRef.current = true;
+        // si ya había un gift en curso, mantenerlo; si no, armar uno nuevo.
+        const gift = localGiftRef.current ?? Date.now() + giftDurationRef.current;
+        if (localGiftRef.current == null) setLocal({ gift });
+        // persistir giftStarted YA, sin depender de que local.gift cambie (si el
+        // gift ya estaba en curso, setLocal sería no-op y el effect no correría).
+        void saveAlbumState(guestId, { state: { gift, giftStarted: true } });
+        showToast("🎁 ¡Completaste el álbum! Tu sobre de regalo está llegando 👇");
+      }
+
       if (r.completed && !completionShownRef.current) {
         if (reinoFirstRef.current) {
           // ya estaba completo al cargar: no re-mostrar el overlay (el álbum
@@ -2234,7 +2259,7 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
     } catch {
       /* la próxima sync / evento realtime reintenta */
     }
-  }, [guestId]);
+  }, [guestId, showToast]);
 
   // ── carga inicial liviana: el perfil + counts ya vienen del server, así que
   //    acá solo el sobre regalo pendiente (necesita Date.now, client-only) y
@@ -2274,11 +2299,12 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
     };
   }, [guestId, refreshReino]);
 
-  // ── persistir el contador del sobre regalo ──
+  // ── persistir el contador del sobre regalo (+ la marca de que ya se armó por
+  //    completar, para no re-armarlo cuando `gift` vuelve a null al abrirlo) ──
   useEffect(() => {
     if (!hydratedRef.current) return;
     const t = setTimeout(() => {
-      void saveAlbumState(guestId, { state: { gift: local.gift } });
+      void saveAlbumState(guestId, { state: { gift: local.gift, giftStarted: giftStartedRef.current } });
     }, 600);
     return () => clearTimeout(t);
   }, [local.gift, guestId]);
@@ -2592,17 +2618,6 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
     }
   };
 
-  // ── sobre regalo ──
-  const handleSimGift = () => {
-    const giftPending = pendingPacks(core.packsRaw).some((t) => parseToken(t).key === "gift");
-    if (local.gift || giftPending) {
-      showToast("Ya tenés un sobre regalo en camino 🎁");
-      return;
-    }
-    setLocal({ gift: Date.now() + giftDurationMs });
-    showToast("Mirá el contador acá abajo 👇");
-  };
-
   const handleCardTap = (f: Fig, qty: number) => {
     setSheet({ type: "card-detail", f, qty });
   };
@@ -2774,7 +2789,6 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
             colgantes={reino?.myColgantes ?? 0}
             tradeCode={reino?.tradeCode ?? ""}
             onEdit={handleEditProfile}
-            onSimGift={handleSimGift}
           />
         )}
       </div>
