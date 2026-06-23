@@ -73,7 +73,7 @@ const USED_PREFIX = "used:"
 
 // Tamaño por defecto de cada tipo de sobre cuando el token no trae "#valor".
 const PACK_DEFAULT: Record<string, number> = {
-  start: 6,
+  start: 10,
   trivia: 4,
   codigo: 4,
   carta: 2,
@@ -128,6 +128,7 @@ const EVENT_ID = process.env.FIGUS_EVENT_ID ?? ""
 function drawCards(
   n: number,
   stocks: { cardId: number; issued: number; maxCount: number }[],
+  userCounts: Record<number, number> = {},
 ): number[] {
   const cap = new Map<number, number>()
   const stockMap = new Map(stocks.map((s) => [s.cardId, s]))
@@ -136,18 +137,33 @@ function drawCards(
     cap.set(f.id, stock ? Math.max(0, stock.maxCount - stock.issued) : Infinity)
   }
 
+  // Máximo 2 copias por carta por usuario. Si ya tiene 2+, no puede recibir más.
+  const MAX_USER_COPIES = 2
+  const canDraw = (id: number) => (userCounts[id] || 0) < MAX_USER_COPIES
+
   const drawn: number[] = []
   for (let i = 0; i < n; i++) {
-    const pool: number[] = []
+    // Pool respetando el cap de usuario (preferencia)
+    let pool: number[] = []
     for (const f of FIGS) {
       if ((cap.get(f.id) ?? 0) <= 0) continue
+      if (!canDraw(f.id)) continue
       for (let j = 0; j < WEIGHTS[f.r]; j++) pool.push(f.id)
+    }
+    // Fallback sin cap de usuario si el pool quedó vacío (todos al tope)
+    if (pool.length === 0) {
+      for (const f of FIGS) {
+        if ((cap.get(f.id) ?? 0) <= 0) continue
+        for (let j = 0; j < WEIGHTS[f.r]; j++) pool.push(f.id)
+      }
     }
     if (pool.length === 0) break
     const pick = pool[Math.floor(Math.random() * pool.length)]
     if (pick === undefined) break
     drawn.push(pick)
     cap.set(pick, (cap.get(pick) ?? 0) - 1)
+    // También actualizar el contador local para que la siguiente iteración lo considere
+    userCounts = { ...userCounts, [pick]: (userCounts[pick] || 0) + 1 }
   }
   return drawn
 }
@@ -183,15 +199,27 @@ function applyPity(
 // para que el cliente hidrate el juego donde lo dejó.
 // ─────────────────────────────────────────────
 
+const DEFAULT_GIFT_DURATION_MS = 600_000 // 10 minutos
+
 export async function loadAlbum(guestId: string) {
   if (!guestId) return { error: "Invitado no encontrado" }
 
-  const guest = await db.androLedGuest.upsert({
-    where: { id: guestId },
-    update: {},
-    create: { id: guestId, name: "", avatar: "" },
-    select: { id: true, name: true, mesa: true, nroPulsera: true, avatar: true, selfie: true },
-  })
+  const [guest, giftDurationItem] = await Promise.all([
+    db.androLedGuest.upsert({
+      where: { id: guestId },
+      update: {},
+      create: { id: guestId, name: "", avatar: "" },
+      select: { id: true, name: true, mesa: true, nroPulsera: true, avatar: true, selfie: true },
+    }),
+    db.figusInventory.findUnique({
+      where: { eventId_key: { eventId: EVENT_ID, key: "gift_duration" } },
+      select: { total: true },
+    }),
+  ])
+
+  const giftDurationMs = giftDurationItem && giftDurationItem.total > 0
+    ? giftDurationItem.total * 60_000
+    : DEFAULT_GIFT_DURATION_MS
 
   let album = await db.figusAlbum.findUnique({ where: { guestId } })
 
@@ -220,6 +248,7 @@ export async function loadAlbum(guestId: string) {
       counts: parseCounts(album.counts),
       packsLeft: album.packsLeft,
       state: parseState(album.state),
+      giftDurationMs,
     },
   }
 }
@@ -269,8 +298,12 @@ export async function openPack(guestId: string, token: string) {
     })
 
     const uniques = FIGS.filter((f) => (counts[f.id] || 0) > 0).length
-    const minNew = Math.min(n, key === "start" ? 3 : uniques < 10 ? 1 : 0)
-    const drawnIds = applyPity(drawCards(n, stocks), minNew, counts)
+    const minNew = Math.min(n,
+      key === "start" ? 3 :
+      key === "carta" ? n :
+      uniques < 10 ? 1 : 0
+    )
+    const drawnIds = applyPity(drawCards(n, stocks, { ...before }), minNew, counts)
 
     for (const cardId of drawnIds) counts[cardId] = (counts[cardId] || 0) + 1
 
@@ -300,10 +333,22 @@ export async function openPack(guestId: string, token: string) {
       data: { counts, packsLeft: newPacksLeft },
     })
 
-    // Dorada: roll + claim atómico de una carta dorada del stock global.
+    // Dorada: roll + claim atómico. Si hay "force_gold" pendientes en inventario,
+    // la probabilidad sube a 1 y se descuenta el contador.
     let goldWon: number | null = null
-    const dor = DOR_BY_KEY[key] ?? 0.06
-    if (Math.random() < dor) {
+    let baseDor = DOR_BY_KEY[key] ?? 0.06
+    const fgItem = await tx.figusInventory.findUnique({
+      where: { eventId_key: { eventId: EVENT_ID, key: "force_gold" } },
+    })
+    const forceGoldRemaining = fgItem ? Math.max(0, fgItem.total - fgItem.delivered) : 0
+    if (forceGoldRemaining > 0) {
+      baseDor = 1
+      await tx.figusInventory.update({
+        where: { eventId_key: { eventId: EVENT_ID, key: "force_gold" } },
+        data: { delivered: { increment: 1 } },
+      })
+    }
+    if (Math.random() < baseDor) {
       const gold = await tx.figusGold.findFirst({
         where: { eventId: EVENT_ID, winnerId: null },
         orderBy: { goldIdx: "asc" },

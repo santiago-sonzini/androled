@@ -31,20 +31,30 @@ export const FIGUS_EVENT_ID = process.env.FIGUS_EVENT_ID ?? ""
 export const TOTAL_FIGS = 15
 export const SEC_TOTAL = 10 // colgantes RGB
 export const GOLD_COUNT = 3 // cartas doradas
-export const PRIZE_KEYS = ["camara", "reloj", "peluche"] as const
+export const PRIZE_KEYS = [
+  "camara",
+  "funko_dante_1",
+  "funko_dante_2",
+  "minnie_1",
+  "minnie_2",
+  "minnie_3",
+] as const
 export const FEED_LIMIT = 30
 
-export const PRIZE_META: Record<string, { nm: string; g: string }> = {
-  camara: { nm: "Cámara instantánea", g: "📷" },
-  reloj: { nm: "Reloj Disney", g: "⌚" },
-  peluche: { nm: "Peluche Disney", g: "🧸" },
+export const PRIZE_META: Record<string, { nm: string; g: string; img: string }> = {
+  camara:       { nm: "Cámara Instantánea",     g: "📷", img: "/prizes/camara.webp" },
+  funko_dante_1:{ nm: "Funko Pop Dante",         g: "💀", img: "/prizes/funko_dante.webp" },
+  funko_dante_2:{ nm: "Funko Pop Dante",         g: "💀", img: "/prizes/funko_dante.webp" },
+  minnie_1:     { nm: "Disney Minnie Combo × 3", g: "🎀", img: "/prizes/minnie_combo.webp" },
+  minnie_2:     { nm: "Disney Minnie Combo × 3", g: "🎀", img: "/prizes/minnie_combo.webp" },
+  minnie_3:     { nm: "Disney Minnie Combo × 3", g: "🎀", img: "/prizes/minnie_combo.webp" },
 }
 
 // Doradas (cartas 16/17/18).
-export const GOLD_META: { nm: string; g: string }[] = [
-  { nm: "Marti & Stitch", g: "💙" },
-  { nm: "Marti & Simba", g: "🦁" },
-  { nm: "Marti Enredada", g: "🏮" },
+export const GOLD_META: { nm: string; g: string; prize: string; img: string }[] = [
+  { nm: "Marti & Stitch",   g: "💙", prize: "Stitch Robótico",       img: "/prizes/stitch.webp" },
+  { nm: "Marti & Simba",    g: "🦁", prize: "LEGO Simba",            img: "/prizes/lego_simba.webp" },
+  { nm: "Marti Enredada",   g: "🏮", prize: "Funko Pop Enredadas",   img: "/prizes/funko_rapunzel.webp" },
 ]
 
 // Nombre + glyph de cada figu (para construir el texto de los eventos del

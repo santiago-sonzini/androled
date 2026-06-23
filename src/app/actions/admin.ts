@@ -34,6 +34,18 @@ async function ensureSeed() {
     update: {},
     create: { eventId: EVENT_ID, key: "colgante", label: "Colgante RGB", emoji: "📿", total: SEC_TOTAL },
   })
+  // Config: duración del sobre regalo (minutos). Default 10.
+  await db.figusInventory.upsert({
+    where: { eventId_key: { eventId: EVENT_ID, key: "gift_duration" } },
+    update: {},
+    create: { eventId: EVENT_ID, key: "gift_duration", label: "Timer sobre regalo (min)", emoji: "⏱️", total: 10 },
+  })
+  // Config: forzar doradas en próximos N sobres.
+  await db.figusInventory.upsert({
+    where: { eventId_key: { eventId: EVENT_ID, key: "force_gold" } },
+    update: {},
+    create: { eventId: EVENT_ID, key: "force_gold", label: "Force Gold pendientes", emoji: "🌟", total: 0 },
+  })
 }
 
 // ─────────────────────────────────────────────
@@ -70,6 +82,7 @@ export async function loadAdmin() {
         nroPulsera: a.guest.nroPulsera,
         mesa: a.guest.mesa,
         uniques: uniquesOf(counts),
+        counts,
         completed: a.completedAt != null,
         completedAt: a.completedAt ? a.completedAt.getTime() : null,
       }
@@ -85,10 +98,15 @@ export async function loadAdmin() {
     idx: g.goldIdx,
     nm: GOLD_META[g.goldIdx]?.nm ?? `Dorada ${g.goldIdx + 1}`,
     g: GOLD_META[g.goldIdx]?.g ?? "✨",
+    prize: GOLD_META[g.goldIdx]?.prize ?? "",
+    img: GOLD_META[g.goldIdx]?.img ?? "",
     winnerId: g.winnerId,
     winnerName: g.winnerName,
     delivered: g.deliveredAt != null,
   }))
+
+  const giftDurationItem = inventory.find((i) => i.key === "gift_duration")
+  const forceGoldItem = inventory.find((i) => i.key === "force_gold")
 
   return {
     stats: {
@@ -104,6 +122,7 @@ export async function loadAdmin() {
         key: k,
         nm: PRIZE_META[k]!.nm,
         g: PRIZE_META[k]!.g,
+        img: PRIZE_META[k]!.img,
         winnerId: p?.winnerId ?? null,
         winnerName: p?.winnerName ?? null,
         delivered: p?.deliveredAt != null,
@@ -117,6 +136,8 @@ export async function loadAdmin() {
       total: i.total,
       delivered: i.delivered,
     })),
+    giftDuration: giftDurationItem?.total ?? 10,
+    forceGoldRemaining: forceGoldItem ? Math.max(0, forceGoldItem.total - forceGoldItem.delivered) : 0,
   }
 }
 
@@ -249,4 +270,44 @@ export async function giveGiftToGuest(guestId: string): Promise<R> {
   if (!res.ok) return { ok: false, error: res.error }
   revalidatePath("/admin-reino")
   return { ok: true }
+}
+
+// ─────────────────────────────────────────────
+// FORCE GOLD — forzar doradas en próximos N sobres
+// ─────────────────────────────────────────────
+
+export async function addForceGold(count: number): Promise<R> {
+  const n = Math.max(1, Math.min(20, Math.round(count) || 3))
+  try {
+    await db.figusInventory.upsert({
+      where: { eventId_key: { eventId: EVENT_ID, key: "force_gold" } },
+      update: { total: { increment: n } },
+      create: { eventId: EVENT_ID, key: "force_gold", label: "Force Gold pendientes", emoji: "🌟", total: n },
+    })
+    revalidatePath("/admin-reino")
+    return { ok: true }
+  } catch (e) {
+    console.error("[addForceGold]", e)
+    return { ok: false, error: "No se pudo configurar force gold" }
+  }
+}
+
+// ─────────────────────────────────────────────
+// GIFT DURATION — configurar timer del sobre regalo (en minutos)
+// ─────────────────────────────────────────────
+
+export async function setGiftDuration(minutes: number): Promise<R> {
+  const m = Math.max(1, Math.min(120, Math.round(minutes) || 10))
+  try {
+    await db.figusInventory.upsert({
+      where: { eventId_key: { eventId: EVENT_ID, key: "gift_duration" } },
+      update: { total: m },
+      create: { eventId: EVENT_ID, key: "gift_duration", label: "Timer sobre regalo (min)", emoji: "⏱️", total: m },
+    })
+    revalidatePath("/admin-reino")
+    return { ok: true }
+  } catch (e) {
+    console.error("[setGiftDuration]", e)
+    return { ok: false, error: "No se pudo actualizar el timer" }
+  }
 }

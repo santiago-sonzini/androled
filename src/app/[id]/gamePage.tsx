@@ -108,6 +108,7 @@ type SheetMode =
   | { type: "dorada"; idx: number }
   | { type: "completion"; prizeNm: string | null }
   | { type: "pick-request" }
+  | { type: "card-detail"; f: Fig; qty: number }
   | {
       type: "code-result";
       otherName: string;
@@ -137,7 +138,7 @@ function parseToken(token: string): { key: string; n: number } {
 }
 
 const PACK_DEFAULT: Record<string, number> = {
-  start: 6,
+  start: 10,
   trivia: 4,
   codigo: 4,
   carta: 2,
@@ -759,11 +760,11 @@ function SectionHeader({ label }: { label: string }) {
 // FIG CARD
 // ─────────────────────────────────────────────
 
-function FigCard({ f, qty }: { f: Fig; qty: number }) {
+function FigCard({ f, qty, onClick }: { f: Fig; qty: number; onClick?: () => void }) {
   const num = String(f.id).padStart(2, "0");
   if (qty === 0) {
     return (
-      <div className="fk-fig empty">
+      <div className="fk-fig empty" onClick={onClick}>
         <span className="num">{num}</span>
         <span className="q">?</span>
         <div className="film" style={{ marginTop: 6 }}>
@@ -774,7 +775,7 @@ function FigCard({ f, qty }: { f: Fig; qty: number }) {
   }
   // La carta real (con marco/número/nombre/rareza) llena la celda.
   return (
-    <div className={`fk-fig have art${qty > 1 ? " flash" : ""}`}>
+    <div className={`fk-fig have art${qty > 1 ? " flash" : ""}`} onClick={onClick} style={{ cursor: onClick ? "pointer" : undefined }}>
       <CardImg id={f.id} alt={f.nm} />
       {qty > 1 && <span className="dupe-q">x{qty}</span>}
     </div>
@@ -913,9 +914,12 @@ interface AlbumScreenProps {
   readyTokens: string[];
   cartasFound: number;
   igUsed: boolean;
+  giftDurationMs: number;
   onOpenToken: (token: string) => void;
   onSource: (key: string) => void;
   onOpenTrade: () => void;
+  onCardTap: (f: Fig, qty: number) => void;
+  onRefresh: () => void;
 }
 
 function AlbumScreen({
@@ -925,25 +929,30 @@ function AlbumScreen({
   readyTokens,
   cartasFound,
   igUsed,
+  giftDurationMs,
   onOpenToken,
   onSource,
   onOpenTrade,
+  onCardTap,
+  onRefresh,
 }: AlbumScreenProps) {
   const owned = (id: number) => (counts[id] || 0) > 0;
   const uniques = FIGS.filter((f) => owned(f.id)).length;
   const needCount = 15 - uniques;
+  const giftMinutes = Math.round(giftDurationMs / 60_000);
 
-  const tiles: { key: string; ready?: string; spent?: boolean }[] = [
+  const tiles: { key: string; ready?: string; spent?: boolean; hint?: string; action?: string }[] = [
     { key: "codigo" },
     { key: "carta", spent: cartasFound >= CARTAS_MAX },
     { key: "ig", spent: igUsed },
+    { key: "gift", hint: `⏱️ Cada ${giftMinutes} min · toca en Cuenta`, action: "account" },
   ];
 
   return (
     <div className="fk-pad app">
       <div className="fk-grid">
         {FIGS.map((f) => (
-          <FigCard key={f.id} f={f} qty={counts[f.id] || 0} />
+          <FigCard key={f.id} f={f} qty={counts[f.id] || 0} onClick={() => onCardTap(f, counts[f.id] || 0)} />
         ))}
       </div>
 
@@ -975,7 +984,14 @@ function AlbumScreen({
         </>
       ) : (
         <>
-          <SectionHeader label="Conseguir sobres" />
+          <div className="fk-sh">
+            <div className="ln" />
+            <span>Conseguir sobres</span>
+            <div className="ln" />
+            <button className="fk-btn ghost sm" onClick={onRefresh} style={{ padding: "7px 12px" }}>
+              ⟳ Actualizar
+            </button>
+          </div>
           <p className="fk-hint fk-center">
             Canjeá <b style={{ color: "var(--ink)" }}>códigos de las entrevistas</b> o encontrá los{" "}
             <b style={{ color: "var(--ink)" }}>sobres escondidos</b> por el salón.
@@ -983,6 +999,11 @@ function AlbumScreen({
           <div className="fk-src-row">
             {tiles.map((tile) => {
               const m = SRC_META[tile.key]!;
+              const desc = tile.hint ?? (
+                tile.key === "carta" && cartasFound > 0 && cartasFound < CARTAS_MAX
+                  ? `${cartasFound}/${CARTAS_MAX} encontrados`
+                  : m.d
+              );
               return (
                 <div
                   key={tile.key}
@@ -991,11 +1012,7 @@ function AlbumScreen({
                 >
                   <div className="ic">{m.ic}</div>
                   <div className="t">{m.t}</div>
-                  <div className="d">
-                    {tile.key === "carta" && cartasFound > 0 && cartasFound < CARTAS_MAX
-                      ? `${cartasFound}/${CARTAS_MAX} encontrados`
-                      : m.d}
-                  </div>
+                  <div className="d">{desc}</div>
                 </div>
               );
             })}
@@ -1041,7 +1058,7 @@ function AlbumScreen({
           ),
         )}
       </div>
-      <p className="fk-footnote">No hacen falta para ganar · cada dorada se lleva un colgante RGB 📿</p>
+      <p className="fk-footnote">No hacen falta para ganar · cada dorada tiene su premio especial 🎁</p>
     </div>
   );
 }
@@ -1188,25 +1205,31 @@ interface PrizesScreenProps {
 
 function PrizesScreen({ prizes, colgantesLeft, myColgantes, doraLog }: PrizesScreenProps) {
   const HOW: Record<string, string> = {
-    camara: "1º en completar el álbum",
-    reloj: "2º en completar el álbum",
-    peluche: "3º en completar el álbum",
+    camara:        "1ª en completar el álbum",
+    funko_dante_1: "2ª en completar el álbum",
+    funko_dante_2: "3ª en completar el álbum",
+    minnie_1:      "4ª en completar el álbum",
+    minnie_2:      "5ª en completar el álbum",
+    minnie_3:      "6ª en completar el álbum",
   };
   return (
     <div className="fk-pad app">
-      <SectionHeader label="Premios principales" />
+      <SectionHeader label="Premios · primeras 6 en completar" />
       <div className="fk-card" style={{ padding: "6px 16px 16px" }}>
         {prizes.map((p) => (
           <div key={p.key} className={`fk-req${p.winnerName ? " given" : ""}`}>
-            <div className="fg" style={{ fontSize: 24 }}>
-              {p.g}
-            </div>
+            {p.img ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={p.img} alt={p.nm} style={{ width: 44, height: 44, objectFit: "contain", borderRadius: 8, flexShrink: 0 }} />
+            ) : (
+              <div className="fg" style={{ fontSize: 24 }}>{p.g}</div>
+            )}
             <div className="tx">
               <div className="a">
                 <b>{p.nm}</b>
               </div>
               <div className="b">
-                {p.winnerName ? `✓ ${p.mine ? "¡Lo ganaste vos!" : `Entregado a ${p.winnerName}`}` : HOW[p.key]}
+                {p.winnerName ? `✓ ${p.mine ? "¡Lo ganaste vos!" : `Ganado por ${p.winnerName}`}` : HOW[p.key]}
               </div>
             </div>
             {p.winnerName && <span className="chk">✓</span>}
@@ -1217,16 +1240,19 @@ function PrizesScreen({ prizes, colgantesLeft, myColgantes, doraLog }: PrizesScr
       <SectionHeader label={`Colgantes RGB · quedan ${colgantesLeft} de ${SEC_TOTAL}`} />
       <div className="fk-card fk-center">
         <div style={{ fontSize: 25, letterSpacing: 5, lineHeight: 1.5 }}>
-          {colgantesLeft > 0 ? "📿".repeat(colgantesLeft) : "✨ ¡Volaron todos! ✨"}
+          {colgantesLeft > 0 ? "📿".repeat(Math.min(colgantesLeft, 10)) : "✨ ¡Volaron todos! ✨"}
         </div>
         <p className="fk-hint mt14">
-          {SEC_TOTAL} colgantes RGB de Marti. Las <b style={{ color: "var(--gold-1)" }}>3 cartas
-          doradas</b> se llevan uno seguro — el resto se sortea durante la noche.
+          {SEC_TOTAL} colgantes RGB de Marti — para quienes completen el álbum{" "}
+          <b style={{ color: "var(--gold-1)" }}>después del 6to lugar</b>.
         </p>
         {myColgantes > 0 && <div className="fk-pill mt14">📿 Vos ya ganaste {myColgantes}</div>}
       </div>
 
-      <SectionHeader label="Ganadores con carta dorada" />
+      <SectionHeader label="Doradas · premios especiales" />
+      <p className="fk-hint fk-center" style={{ marginBottom: 10 }}>
+        Cada dorada sale <b style={{ color: "var(--gold-1)" }}>una sola vez</b> y gana su premio.
+      </p>
       <div className="fk-card" style={{ padding: "6px 16px 16px" }}>
         {doraLog.length ? (
           doraLog.map((e, i) => (
@@ -1236,7 +1262,7 @@ function PrizesScreen({ prizes, colgantesLeft, myColgantes, doraLog }: PrizesScr
                 <div className="a">
                   <b>{e.mine ? "Vos" : e.name}</b> sacó la dorada <b>{e.goldNm}</b>
                 </div>
-                <div className="b">📿 Colgante RGB</div>
+                <div className="b">🎁 {e.goldPrize || "Premio especial"}</div>
               </div>
             </div>
           ))
@@ -1958,6 +1984,70 @@ function CodeResultSheet({
 }
 
 // ─────────────────────────────────────────────
+// CARD DETAIL SHEET
+// ─────────────────────────────────────────────
+
+function CardDetailSheet({
+  f,
+  qty,
+  busy,
+  onPubRequest,
+  onClose,
+}: {
+  f: Fig;
+  qty: number;
+  busy: boolean;
+  onPubRequest: (figId: number) => void;
+  onClose: () => void;
+}) {
+  const rarityLabel: Record<string, string> = {
+    comun: "Común",
+    rara: "Rara",
+    epica: "Épica",
+    m: "Mítica",
+  };
+  return (
+    <div className="fk-modal-card" style={{ alignItems: "center", gap: 12 }}>
+      <button
+        className="fk-btn ghost sm"
+        onClick={onClose}
+        style={{ alignSelf: "flex-end", padding: "4px 10px", fontSize: 18, lineHeight: 1 }}
+      >
+        ✕
+      </button>
+      <div style={{ width: 160, height: 220, borderRadius: 12, overflow: "hidden", boxShadow: "0 4px 24px #0006" }}>
+        {qty > 0 ? (
+          <CardImg id={f.id} alt={f.nm} />
+        ) : (
+          <div style={{ width: "100%", height: "100%", background: "#1a1a2e", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 48 }}>
+            {f.g}
+          </div>
+        )}
+      </div>
+      <div style={{ textAlign: "center" }}>
+        <div style={{ fontSize: 22, fontWeight: 700, color: "#fff", marginBottom: 2 }}>{f.nm}</div>
+        <div style={{ fontSize: 13, color: "#aaa" }}>{rarityLabel[f.r] ?? f.r} · #{String(f.id).padStart(2, "0")}</div>
+        {qty > 1 && (
+          <div style={{ marginTop: 6, fontSize: 13, color: "#f9c74f", fontWeight: 600 }}>
+            Tenés {qty} copias
+          </div>
+        )}
+      </div>
+      {qty >= 2 && (
+        <button
+          className="fk-btn"
+          disabled={busy}
+          onClick={() => onPubRequest(f.id)}
+          style={{ marginTop: 4 }}
+        >
+          📢 Publicar para cambio
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
 // NAV + GIFT BAR + TOAST
 // ─────────────────────────────────────────────
 
@@ -1996,9 +2086,12 @@ function Toast({ message, visible }: { message: string; visible: boolean }) {
 
 
 const PRIZE_NM: Record<string, string> = {
-  camara: "Cámara instantánea",
-  reloj: "Reloj Disney",
-  peluche: "Peluche Disney",
+  camara: "Cámara Instantánea",
+  funko_dante_1: "Funko Pop Dante",
+  funko_dante_2: "Funko Pop Dante",
+  minnie_1: "Disney Minnie Combo × 3",
+  minnie_2: "Disney Minnie Combo × 3",
+  minnie_3: "Disney Minnie Combo × 3",
 };
 
 // Dato inicial resuelto en el server (SSR) y pasado por la page.
@@ -2012,6 +2105,10 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
     ? AVATARS.find((a) => a.n === profile.guest.avatar) ?? null
     : null;
   const hasProfile = !!(profile?.guest.name && (initialAvatar || profile.guest.selfie));
+
+  const [giftDurationMs, setGiftDurationMs] = useState<number>(
+    profile?.album.giftDurationMs ?? 600_000
+  );
 
   const [core, setCore] = useState<Core>(() => ({
     screen: hasProfile ? "app" : "intro",
@@ -2091,6 +2188,7 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
       const r = await loadReino(guestId);
       setReino(r);
       setCore((s) => ({ ...s, counts: r.myCounts, packsRaw: r.myPacksLeft }));
+      if (r.giftDurationMs) setGiftDurationMs(r.giftDurationMs);
 
       const topId = r.feed[0]?.id ?? null;
       if (tabRef.current === "reino") {
@@ -2486,8 +2584,40 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
       showToast("Ya tenés un sobre regalo en camino 🎁");
       return;
     }
-    setLocal({ gift: Date.now() + 180000 });
+    setLocal({ gift: Date.now() + giftDurationMs });
     showToast("Mirá el contador acá abajo 👇");
+  };
+
+  const handleCardTap = (f: Fig, qty: number) => {
+    setSheet({ type: "card-detail", f, qty });
+  };
+
+  const handleRefreshAlbum = async () => {
+    try {
+      const d = await loadAlbum(guestId);
+      if (d && !("error" in d)) {
+        setCore((s) => ({ ...s, counts: d.album.counts, packsRaw: d.album.packsLeft }));
+        if (d.album.giftDurationMs) setGiftDurationMs(d.album.giftDurationMs);
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const handlePubRequestForFig = async (figId: number) => {
+    if (pending) return;
+    setPending(true);
+    try {
+      const res = await publishRequest(guestId, figId);
+      if (!res.ok) { showToast(res.error ?? "Error al publicar"); return; }
+      showToast("Pedido publicado ✨");
+      setSheet({ type: "none" });
+      await refreshReino();
+    } catch {
+      showToast("Error de conexión");
+    } finally {
+      setPending(false);
+    }
   };
 
   const handleGiftOpen = async () => {
@@ -2573,9 +2703,12 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
             readyTokens={readyTokens}
             cartasFound={cartasFound}
             igUsed={igUsed}
+            giftDurationMs={giftDurationMs}
             onOpenToken={(token) => setSheet({ type: "pack", token })}
             onSource={handleSource}
             onOpenTrade={() => handleTab("trade")}
+            onCardTap={handleCardTap}
+            onRefresh={() => void handleRefreshAlbum()}
           />
         )}
 
@@ -2702,6 +2835,15 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
               pendingPrizeRef.current = null;
               if (pn) showCompletion(pn);
             }}
+          />
+        )}
+        {sheet.type === "card-detail" && (
+          <CardDetailSheet
+            f={sheet.f}
+            qty={sheet.qty}
+            busy={pending}
+            onPubRequest={(figId) => void handlePubRequestForFig(figId)}
+            onClose={() => setSheet({ type: "none" })}
           />
         )}
       </div>

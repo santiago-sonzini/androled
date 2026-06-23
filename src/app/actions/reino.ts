@@ -65,7 +65,7 @@ export async function loadReino(guestId: string) {
   })
   const tradeCode = await ensureTradeCode(guestId, me?.tradeCode ?? null)
 
-  const [albums, events, golds, prizes, myReqRow, openReqs] = await Promise.all([
+  const [albums, events, golds, prizes, myReqRow, openReqs, giftDurationItem] = await Promise.all([
     db.figusAlbum.findMany({
       select: { guestId: true, counts: true, completedAt: true, guest: { select: { name: true } } },
     }),
@@ -81,6 +81,10 @@ export async function loadReino(guestId: string) {
       where: { eventId: EVENT_ID, status: "open", NOT: { guestId } },
       orderBy: { createdAt: "desc" },
       take: 12,
+    }),
+    db.figusInventory.findUnique({
+      where: { eventId_key: { eventId: EVENT_ID, key: "gift_duration" } },
+      select: { total: true },
     }),
   ])
 
@@ -113,6 +117,7 @@ export async function loadReino(guestId: string) {
       key: k,
       nm: PRIZE_META[k]!.nm,
       g: PRIZE_META[k]!.g,
+      img: PRIZE_META[k]!.img,
       winnerName: p?.winnerName ?? null,
       mine: p?.winnerId === guestId,
     }
@@ -123,6 +128,7 @@ export async function loadReino(guestId: string) {
     idx: g.goldIdx,
     nm: GOLD_META[g.goldIdx]?.nm ?? `Dorada ${g.goldIdx + 1}`,
     g: GOLD_META[g.goldIdx]?.g ?? "✨",
+    prize: GOLD_META[g.goldIdx]?.prize ?? "",
     mine: g.winnerId === guestId,
     taken: g.winnerId != null,
     winnerName: g.winnerName ?? null,
@@ -133,6 +139,7 @@ export async function loadReino(guestId: string) {
     .map((g) => ({
       name: g.winnerName ?? "Alguien",
       goldNm: GOLD_META[g.goldIdx]?.nm ?? "dorada",
+      goldPrize: GOLD_META[g.goldIdx]?.prize ?? "",
       mine: g.winnerId === guestId,
     }))
 
@@ -142,6 +149,10 @@ export async function loadReino(guestId: string) {
     figId: r.figId,
     canFulfill: (myCounts[r.figId] || 0) > 1, // tengo esa figu repetida
   }))
+
+  const giftDurationMs = giftDurationItem && giftDurationItem.total > 0
+    ? giftDurationItem.total * 60_000
+    : 600_000
 
   return {
     myCounts,
@@ -157,6 +168,7 @@ export async function loadReino(guestId: string) {
     doraLog,
     myRequest: myReqRow ? { id: myReqRow.id, figId: myReqRow.figId } : null,
     salonRequests,
+    giftDurationMs,
   }
 }
 

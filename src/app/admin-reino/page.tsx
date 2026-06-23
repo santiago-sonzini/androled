@@ -11,6 +11,8 @@ import {
   upsertInventoryItem,
   deleteInventoryItem,
   giveGiftToGuest,
+  addForceGold,
+  setGiftDuration,
 } from "../actions/admin";
 import { lanzarCodigo } from "../actions/pantalla";
 
@@ -97,6 +99,14 @@ const CSS = `
 .ar-bar { flex: 1; height: 6px; border-radius: 99px; background: rgba(255,255,255,.08); overflow: hidden; min-width: 60px; max-width: 120px; }
 .ar-bar i { display: block; height: 100%; background: linear-gradient(90deg,#f1a8c6,#f6dd99); }
 .ar-msg { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); background: rgba(12,9,32,.95); border: 1px solid rgba(246,221,153,.25); padding: 11px 18px; border-radius: 12px; font-weight: 700; font-size: 13px; z-index: 50; }
+.ar-prize-img { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; flex: 0 0 auto; }
+.ar-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.78); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px; }
+.ar-album-modal { background: #150f33; border: 1px solid rgba(246,221,153,.2); border-radius: 18px; padding: 20px; max-width: 420px; width: 100%; max-height: 85vh; overflow-y: auto; }
+.ar-album-grid { display: grid; grid-template-columns: repeat(5,1fr); gap: 6px; margin: 14px 0; }
+.ar-fig-cell { aspect-ratio: 2/3; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 11px; font-weight: 800; gap: 2px; }
+.ar-fig-cell.owned { background: rgba(140,230,176,.16); border: 1px solid rgba(140,230,176,.35); color: #8ce6b0; }
+.ar-fig-cell.owned.dupe { background: rgba(246,221,153,.14); border-color: rgba(246,221,153,.4); color: #f6dd99; }
+.ar-fig-cell.missing { background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08); color: #6a6080; }
 `;
 
 export default function AdminReinoPage() {
@@ -106,6 +116,8 @@ export default function AdminReinoPage() {
   const [search, setSearch] = useState("");
   const [newItem, setNewItem] = useState({ label: "", emoji: "🎁", total: "10" });
   const [codeVal, setCodeVal] = useState("3");
+  const [albumModal, setAlbumModal] = useState<string | null>(null);
+  const [giftMinutes, setGiftMinutes] = useState("10");
   const msgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -130,6 +142,7 @@ export default function AdminReinoPage() {
   }, [toast]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { if (data) setGiftMinutes(String(data.giftDuration ?? 10)); }, [data?.giftDuration]);
 
   // realtime
   useEffect(() => {
@@ -202,7 +215,12 @@ export default function AdminReinoPage() {
         {data.prizes.map((p) => {
           return (
             <div className="ar-card" key={p.key}>
-              <span className="em">{p.g}</span>
+              {p.img ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={p.img} alt={p.nm} className="ar-prize-img" />
+              ) : (
+                <span className="em">{p.g}</span>
+              )}
               <div className="info">
                 <div className="t">{p.nm}</div>
                 <div className="s">
@@ -244,9 +262,15 @@ export default function AdminReinoPage() {
         <div className="ar-sec-h">Cartas doradas</div>
         {data.golds.map((g) => (
           <div className="ar-card" key={g.idx}>
-            <span className="em">{g.g}</span>
+            {g.img ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={g.img} alt={g.nm} className="ar-prize-img" />
+            ) : (
+              <span className="em">{g.g}</span>
+            )}
             <div className="info">
               <div className="t">{g.nm}</div>
+              {g.prize && <div className="s" style={{ color: "#f6dd99" }}>🎁 {g.prize}</div>}
               <div className="s">{g.winnerName ? <>La sacó <b>{g.winnerName}</b></> : "Todavía libre"}</div>
             </div>
             {g.winnerName && (
@@ -320,6 +344,45 @@ export default function AdminReinoPage() {
             <button className="ar-btn sm" disabled={busy} onClick={() => void run(async () => { const r = await lanzarCodigo(45, parseInt(codeVal) || 4); toast(r.ok ? `🔢 ${r.label}` : r.error); return r; })}>🔢 Lanzar código</button>
           </div>
         </div>
+        <div className="ar-card">
+          <div className="info">
+            <div className="t">🌟 Forzar doradas</div>
+            <div className="s">
+              Próximos {data.forceGoldRemaining > 0 ? <b style={{ color: "#f6dd99" }}>{data.forceGoldRemaining} pendientes</b> : "0 pendientes"} · los siguientes sobres que se abran tendrán dorada garantizada.
+            </div>
+          </div>
+          <button className="ar-btn sm" disabled={busy} onClick={() => void run(() => addForceGold(3), "✨ 3 doradas forzadas activadas")}>+ 3 doradas</button>
+        </div>
+        <div className="ar-card" style={{ alignItems: "flex-end" }}>
+          <div className="info">
+            <div className="t">⏱️ Timer sobre regalo</div>
+            <div className="s">Minutos que tarda en aparecer el sobre regalo. Actual: <b>{data.giftDuration} min</b></div>
+          </div>
+          <div className="ar-row">
+            <input
+              className="ar-input"
+              style={{ width: 70 }}
+              inputMode="numeric"
+              value={giftMinutes}
+              onChange={(e) => setGiftMinutes(e.target.value)}
+              placeholder="10"
+            />
+            <button
+              className="ar-btn sm"
+              disabled={busy}
+              onClick={() => void run(() => setGiftDuration(parseInt(giftMinutes) || 10), "⏱️ Timer actualizado")}
+            >
+              Guardar
+            </button>
+          </div>
+        </div>
+        <div className="ar-card">
+          <div className="info">
+            <div className="t">🎤 Códigos de entrevista</div>
+            <div className="s">Generá y activá códigos para dar figus en entrevistas.</div>
+          </div>
+          <a className="ar-btn sm ghost" href="/entrevista" target="_blank" rel="noopener noreferrer">Ir a entrevistas →</a>
+        </div>
 
         {/* invitados */}
         <div className="ar-sec-h">Invitados ({guests.length})</div>
@@ -331,7 +394,7 @@ export default function AdminReinoPage() {
           onChange={(e) => setSearch(e.target.value)}
         />
         {filteredGuests.map((g: Guest) => (
-          <div className="ar-guest" key={g.id}>
+          <div className="ar-guest" key={g.id} style={{ cursor: "pointer" }} onClick={() => setAlbumModal(g.id)}>
             <Face g={g} size={40} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div className="nm">
@@ -344,13 +407,52 @@ export default function AdminReinoPage() {
               </div>
             </div>
             <div className="ar-bar"><i style={{ width: `${(g.uniques / 15) * 100}%` }} /></div>
-            <button className="ar-btn sm ghost" disabled={busy} onClick={() => void run(() => giveGiftToGuest(g.id), `🎁 Sobre regalo para ${g.name}`)}>🎁 Sobre</button>
+            <button className="ar-btn sm ghost" disabled={busy} onClick={(e) => { e.stopPropagation(); void run(() => giveGiftToGuest(g.id), `🎁 Sobre regalo para ${g.name}`); }}>🎁 Sobre</button>
           </div>
         ))}
         {filteredGuests.length === 0 && <div className="ar-guest" style={{ justifyContent: "center", color: "#8a7eb0" }}>Sin resultados</div>}
       </div>
 
       {msg && <div className="ar-msg">{msg}</div>}
+
+      {albumModal && (() => {
+        const g = guests.find((x) => x.id === albumModal);
+        if (!g) return null;
+        const FIG_NAMES: Record<number, string> = {
+          1:"Pooh",2:"Manzana",3:"Dumbo",4:"Dálmatas",5:"Bell",
+          6:"Sirena",7:"Navegante",8:"Circuito",9:"Remy",10:"Vientos",
+          11:"Medianoche",12:"Agrabah",13:"Maléfica",14:"Dante",15:"Bayou",
+        };
+        return (
+          <div className="ar-overlay" onClick={() => setAlbumModal(null)}>
+            <div className="ar-album-modal" onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+                <Face g={g} size={36} />
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 16 }}>{g.name}</div>
+                  <div style={{ fontSize: 12, color: "#8a7eb0" }}>{g.uniques}/15 figus</div>
+                </div>
+                <div style={{ flex: 1 }} />
+                <button className="ar-btn sm ghost" onClick={() => setAlbumModal(null)}>✕</button>
+              </div>
+              <div className="ar-album-grid">
+                {Array.from({ length: 15 }, (_, i) => i + 1).map((id) => {
+                  const qty = (g.counts as Record<number, number>)[id] || 0;
+                  const cls = qty === 0 ? "missing" : qty > 1 ? "owned dupe" : "owned";
+                  return (
+                    <div key={id} className={`ar-fig-cell ${cls}`}>
+                      <span style={{ fontSize: 16 }}>{qty > 0 ? (qty > 1 ? `×${qty}` : "✓") : "?"}</span>
+                      <span style={{ fontSize: 9, textAlign: "center", lineHeight: 1.2 }}>{FIG_NAMES[id]}</span>
+                      <span style={{ fontSize: 9, opacity: 0.6 }}>#{String(id).padStart(2,"0")}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <button className="ar-btn ghost" style={{ width: "100%", marginTop: 4 }} onClick={() => setAlbumModal(null)}>Cerrar</button>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
