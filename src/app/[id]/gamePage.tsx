@@ -448,6 +448,8 @@ body {
 /* sheet overlay */
 .fk-sheet { position: absolute; inset: 0; z-index: 30; background: rgba(8,6,15,.86); backdrop-filter: blur(8px); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 26px; text-align: center; overflow-y: auto; opacity: 0; pointer-events: none; transition: opacity .25s; }
 .fk-sheet.on { opacity: 1; pointer-events: auto; }
+/* reveal del sobre: fondo translúcido para ver el álbum llenándose detrás. */
+.fk-sheet.peek { background: rgba(8,6,15,.5); backdrop-filter: blur(2px); }
 .fk-sheet > * { flex-shrink: 0; }
 
 /* envelope */
@@ -1620,9 +1622,11 @@ function vibrate(p: number | number[]) {
 function PackRevealSheet({
   cards,
   onClose,
+  onReveal,
 }: {
   cards: { f: Fig; isNew: boolean }[];
   onClose: () => void;
+  onReveal?: (figId: number) => void;
 }) {
   const [i, setI] = useState(0);
   const [flipped, setFlipped] = useState(false);
@@ -1726,6 +1730,7 @@ function PackRevealSheet({
   const onTap = () => {
     if (!flipped) {
       setFlipped(true);
+      onReveal?.(c.f.id); // aparece en vivo en el álbum de atrás
       const big = c.isNew && (c.f.r === "epica" || c.f.r === "m");
       vibrate(big ? [18, 50, 18] : c.isNew ? [14, 40] : 12);
       if (c.isNew) spawn(RARITY_PARTICLE_COLORS[c.f.r], big ? 60 : 30);
@@ -2158,6 +2163,12 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
   sheetRef.current = sheet;
   const completionPendingRef = useRef(false);
   const pendingCompletionPrizeRef = useRef<string | null>(null);
+  // Counts finales del sobre que se está revelando: el álbum arranca en el
+  // estado PREVIO y se va llenando figu por figu; al cerrar se concilia a esto.
+  const revealFinalCountsRef = useRef<Record<number, number> | null>(null);
+  // true mientras se revela un sobre: refreshReino NO pisa counts (síncrono,
+  // sin depender del timing del re-render de setSheet).
+  const revealActiveRef = useRef(false);
 
   // ── inyectar CSS una vez ──
   useEffect(() => {
@@ -2197,7 +2208,13 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
     try {
       const r = await loadReino(guestId);
       setReino(r);
-      setCore((s) => ({ ...s, counts: r.myCounts, packsRaw: r.myPacksLeft }));
+      // Durante el reveal NO pisar counts: el álbum se llena figu por figu y el
+      // server ya persistió el estado final; al cerrar se concilia.
+      setCore((s) => ({
+        ...s,
+        counts: revealActiveRef.current ? s.counts : r.myCounts,
+        packsRaw: r.myPacksLeft,
+      }));
       if (r.giftDurationMs) setGiftDurationMs(r.giftDurationMs);
 
       const topId = r.feed[0]?.id ?? null;
@@ -2293,6 +2310,9 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
       completionPendingRef.current = false;
       showCompletion(pendingCompletionPrizeRef.current);
     }
+    // Red de seguridad: si el reveal se cerró por cualquier vía, liberar el lock
+    // de counts para que refreshReino vuelva a sincronizar el álbum.
+    if (sheet.type !== "pack-reveal") revealActiveRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sheet.type]);
 
@@ -2414,17 +2434,27 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
         return { f, isNew: before === 0 };
       });
 
-      setCore((s) => ({
-        ...s,
-        counts: res.counts ?? { ...s.counts },
-        packsRaw: res.packsLeft ?? s.packsRaw,
-      }));
-
       if (cards.length === 0) {
+        setCore((s) => ({ ...s, counts: res.counts ?? { ...s.counts }, packsRaw: res.packsLeft ?? s.packsRaw }));
         showToast("No quedan cartas disponibles 😢");
         setSheet({ type: "none" });
         return;
       }
+
+      // El álbum arranca en el estado PREVIO al sobre y se va llenando figu por
+      // figu a medida que se revelan (ver onReveal). Guardamos el estado final
+      // para conciliar al cerrar el reveal (por si lo saltean).
+      revealFinalCountsRef.current = res.counts ?? null;
+      revealActiveRef.current = true;
+      // Forzar el tab "album": el reveal es translúcido y se llena figu por figu
+      // detrás; si el sobre se abrió desde otra pestaña (ej. la barra de regalo),
+      // el álbum debe estar montado para verse.
+      setCore((s) => ({
+        ...s,
+        tab: "album",
+        counts: res.before ?? { ...s.counts },
+        packsRaw: res.packsLeft ?? s.packsRaw,
+      }));
 
       const goldWon = res.goldWon ?? null;
       const prizeNm = res.prize ? PRIZE_NM[res.prize] ?? null : null;
@@ -2439,7 +2469,22 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
     }
   };
 
+  // Cada figu que se da vuelta en el reveal aparece en vivo en el álbum de atrás.
+  const handleCardReveal = (figId: number) => {
+    setCore((s) => ({ ...s, counts: { ...s.counts, [figId]: (s.counts[figId] || 0) + 1 } }));
+  };
+
   const handleRevealClose = (goldWon: number | null, prizeNm: string | null) => {
+    revealActiveRef.current = false;
+    // Conciliar al estado final (por si se saltearon cartas sin revelarlas).
+    if (revealFinalCountsRef.current) {
+      const final = revealFinalCountsRef.current;
+      revealFinalCountsRef.current = null;
+      setCore((s) => ({ ...s, counts: final }));
+    }
+    // Resync con el server: el snapshot de este sobre no incluye figus que hayan
+    // llegado por un cambio/trade mientras se revelaba (se ignoraban por el lock).
+    void resyncAlbum();
     setSheet({ type: "none" });
     if (goldWon != null) {
       pendingPrizeRef.current = prizeNm;
@@ -2787,7 +2832,7 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
 
       {inApp && !sheetOn && <Nav tab={core.tab} unread={unread} onTab={handleTab} />}
 
-      <div className={`fk-sheet${sheetOn ? " on" : ""}`}>
+      <div className={`fk-sheet${sheetOn ? " on" : ""}${sheet.type === "pack-reveal" ? " peek" : ""}`}>
         {sheet.type === "pack" && (
           <PackSheet token={sheet.token} busy={pending} onOpen={() => void handleOpenEnvelope(sheet.token)} />
         )}
@@ -2795,6 +2840,7 @@ export default function Page({ guestId, initial }: { guestId: string; initial: A
           <PackRevealSheet
             cards={sheet.cards}
             onClose={() => handleRevealClose(sheet.goldWon, sheet.prizeNm)}
+            onReveal={handleCardReveal}
           />
         )}
         {sheet.type === "codigo-entry" && (

@@ -1,0 +1,664 @@
+{
+  "album": [],
+  "event": [
+    {
+      "id": "cmqgvsn73000fn3r05y6p00wi",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>Hola</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 6 repetidas",
+      "actorId": "ahsh",
+      "createdAt": "2026-06-16T16:53:34.191Z"
+    },
+    {
+      "id": "cmqgvtdqo0015n3r0iakxbgld",
+      "eventId": "",
+      "kind": "🙋",
+      "text": "<b>Hola</b> busca <span class=\"g\">Marti Jazmín 🪔</span>",
+      "actorId": "ahsh",
+      "createdAt": "2026-06-16T16:54:08.592Z"
+    },
+    {
+      "id": "cmqh5xos100019er69hffzk8c",
+      "eventId": "",
+      "kind": "🙋",
+      "text": "<b>Sabtiago</b> busca <span class=\"g\">Marti Valiente 🏹</span>",
+      "actorId": "ycpgk9hljw0mxmz0rih25bj9",
+      "createdAt": "2026-06-16T21:37:25.682Z"
+    },
+    {
+      "id": "cmqibw8ch000fykr7872h4yeu",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>Snatigo</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 6 repetidas",
+      "actorId": "asdasd",
+      "createdAt": "2026-06-17T17:12:01.601Z"
+    },
+    {
+      "id": "cmqlhrqrm000tz1q2e7xqzo5u",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>asd</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 6 repetidas",
+      "actorId": "ads",
+      "createdAt": "2026-06-19T22:19:48.419Z"
+    },
+    {
+      "id": "cmqmlfkuj000lkog2jksb7a75",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>asd</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 6 repetidas",
+      "actorId": "idran",
+      "createdAt": "2026-06-20T16:50:05.516Z"
+    },
+    {
+      "id": "cmqmlhp700017kog2w92he4od",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>Jajs</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 6 repetidas",
+      "actorId": "idcom",
+      "createdAt": "2026-06-20T16:51:44.461Z"
+    },
+    {
+      "id": "cmqmlifhl001xkog2cy09nhna",
+      "eventId": "",
+      "kind": "🙋",
+      "text": "<b>Jajs</b> busca <span class=\"g\">Marti &amp; los Vientos 🍃</span>",
+      "actorId": "idcom",
+      "createdAt": "2026-06-20T16:52:18.537Z"
+    },
+    {
+      "id": "cmqmlilc7002hkog21lzqqvs0",
+      "eventId": "",
+      "kind": "🤝",
+      "text": "<b>asd</b> le pasó <span class=\"g\">Marti &amp; los Vientos 🍃</span> a <b>Jajs</b> — ¡genia!",
+      "actorId": "ads",
+      "createdAt": "2026-06-20T16:52:26.119Z"
+    },
+    {
+      "id": "cmqp8q5900007kifj6hhnt6v6",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>asd</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 2 repetidas",
+      "actorId": "ads",
+      "createdAt": "2026-06-22T13:17:42.036Z"
+    },
+    {
+      "id": "cmqp8r5lh000lkifj9foaoeql",
+      "eventId": "",
+      "kind": "🙋",
+      "text": "<b>asd</b> busca <span class=\"g\">Marti Sirena 🐚</span>",
+      "actorId": "ads",
+      "createdAt": "2026-06-22T13:18:29.142Z"
+    },
+    {
+      "id": "cmqp8rvp90015kifj0zuewy7w",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>asd</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 2 repetidas",
+      "actorId": "ads",
+      "createdAt": "2026-06-22T13:19:02.973Z"
+    },
+    {
+      "id": "cmqp8s2jl001dkifj0rg55vto",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>asd</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 2 repetidas",
+      "actorId": "ads",
+      "createdAt": "2026-06-22T13:19:11.841Z"
+    },
+    {
+      "id": "cmqp8s8jx001lkifjwsjemphy",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>asd</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 1 repetida",
+      "actorId": "ads",
+      "createdAt": "2026-06-22T13:19:19.630Z"
+    },
+    {
+      "id": "cmqp8up38003dkifj3jxzb4s6",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>pepe</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 6 repetidas",
+      "actorId": "idrandom",
+      "createdAt": "2026-06-22T13:21:14.372Z"
+    },
+    {
+      "id": "cmqp8vzsh003rkifj1tv4sbf4",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>pepe</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 2 repetidas",
+      "actorId": "idrandom",
+      "createdAt": "2026-06-22T13:22:14.897Z"
+    },
+    {
+      "id": "cmqp8w3wv003zkifj4qrmjfcl",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>pepe</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 2 repetidas",
+      "actorId": "idrandom",
+      "createdAt": "2026-06-22T13:22:20.239Z"
+    },
+    {
+      "id": "cmqp8w7al0047kifjn0ly62iv",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>pepe</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 2 repetidas",
+      "actorId": "idrandom",
+      "createdAt": "2026-06-22T13:22:24.621Z"
+    },
+    {
+      "id": "cmqp8wbhq004fkifjany0k5k6",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>pepe</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 1 repetida",
+      "actorId": "idrandom",
+      "createdAt": "2026-06-22T13:22:30.063Z"
+    },
+    {
+      "id": "cmqp8ycn8004zkifjwbrdgm0d",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>pepe</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 4 repetidas",
+      "actorId": "idrandom",
+      "createdAt": "2026-06-22T13:24:04.869Z"
+    },
+    {
+      "id": "cmqp8yxm2005jkifj2hp67otp",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>pepe</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 4 repetidas",
+      "actorId": "idrandom",
+      "createdAt": "2026-06-22T13:24:32.042Z"
+    },
+    {
+      "id": "cmqp8z9t6005xkifj61f1yzjq",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>pepe</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 4 repetidas",
+      "actorId": "idrandom",
+      "createdAt": "2026-06-22T13:24:47.851Z"
+    },
+    {
+      "id": "cmqp8zhyl006bkifjzon08r51",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>pepe</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 4 repetidas",
+      "actorId": "idrandom",
+      "createdAt": "2026-06-22T13:24:58.413Z"
+    },
+    {
+      "id": "cmqp8zrbp006pkifjhqlfe18x",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>pepe</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 4 repetidas",
+      "actorId": "idrandom",
+      "createdAt": "2026-06-22T13:25:10.549Z"
+    },
+    {
+      "id": "cmqp8zzvp0073kifj1pxr8ziz",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>pepe</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 4 repetidas",
+      "actorId": "idrandom",
+      "createdAt": "2026-06-22T13:25:21.637Z"
+    },
+    {
+      "id": "cmqp908es007hkifj8w6p2o0j",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>pepe</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 4 repetidas",
+      "actorId": "idrandom",
+      "createdAt": "2026-06-22T13:25:32.692Z"
+    },
+    {
+      "id": "cmqp90mk8007vkifjpjram4ij",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>pepe</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 4 repetidas",
+      "actorId": "idrandom",
+      "createdAt": "2026-06-22T13:25:51.032Z"
+    },
+    {
+      "id": "cmqp90x0s0089kifjplemsmgl",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>pepe</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 4 repetidas",
+      "actorId": "idrandom",
+      "createdAt": "2026-06-22T13:26:04.589Z"
+    },
+    {
+      "id": "cmqp90x1d008akifjg7nqdr3d",
+      "eventId": "",
+      "kind": "🎆",
+      "text": "<b>pepe</b> completó el Reino 👑 — ¡ganó Cámara instantánea!",
+      "actorId": "idrandom",
+      "createdAt": "2026-06-22T13:26:04.609Z"
+    },
+    {
+      "id": "cmqqqhon4000fujphzosgqrtw",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>PABLO GOTZ</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 6 repetidas",
+      "actorId": "cmoxjg1rp0009igo1jm7s9vqi",
+      "createdAt": "2026-06-23T14:22:46.528Z"
+    },
+    {
+      "id": "cmqqqjh8n000nujph181q4b36",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>PABLO GOTZ</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 2 repetidas",
+      "actorId": "cmoxjg1rp0009igo1jm7s9vqi",
+      "createdAt": "2026-06-23T14:24:10.248Z"
+    },
+    {
+      "id": "cmqqqk10k000vujph364jr3a0",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>PABLO GOTZ</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 2 repetidas",
+      "actorId": "cmoxjg1rp0009igo1jm7s9vqi",
+      "createdAt": "2026-06-23T14:24:35.877Z"
+    },
+    {
+      "id": "cmqqqkrt60001a4t9rjy1asur",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>OSVALDO VILLALBA</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 6 repetidas",
+      "actorId": "cmpd8ejuc0001s3hkoqeuthny",
+      "createdAt": "2026-06-23T14:25:10.603Z"
+    },
+    {
+      "id": "cmqqqpwub000j8i96sc3ey3j1",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>PABLO GOTZ</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 1 repetida",
+      "actorId": "cmoxjg1rp0009igo1jm7s9vqi",
+      "createdAt": "2026-06-23T14:29:10.403Z"
+    },
+    {
+      "id": "cmqqqq1cw000r8i9667ek5ijm",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>PABLO GOTZ</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 2 repetidas",
+      "actorId": "cmoxjg1rp0009igo1jm7s9vqi",
+      "createdAt": "2026-06-23T14:29:16.257Z"
+    },
+    {
+      "id": "cmqqqw62e006h8i9690wfl18c",
+      "eventId": "",
+      "kind": "🙋",
+      "text": "<b>PABLO GOTZ</b> busca <span class=\"g\">Marti en el Circuito 🏎️</span>",
+      "actorId": "cmoxjg1rp0009igo1jm7s9vqi",
+      "createdAt": "2026-06-23T14:34:02.294Z"
+    },
+    {
+      "id": "cmqqqwp8f006v8i96lozvhq2h",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>OSVALDO VILLALBA</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 4 repetidas",
+      "actorId": "cmpd8ejuc0001s3hkoqeuthny",
+      "createdAt": "2026-06-23T14:34:27.136Z"
+    },
+    {
+      "id": "cmqqqwsp500738i96zf5d19bl",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>PABLO GOTZ</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 4 repetidas",
+      "actorId": "cmoxjg1rp0009igo1jm7s9vqi",
+      "createdAt": "2026-06-23T14:34:31.626Z"
+    },
+    {
+      "id": "cmqqr4f6f009h8i96ecwwtztw",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>PABLO GOTZ</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 4 repetidas",
+      "actorId": "cmoxjg1rp0009igo1jm7s9vqi",
+      "createdAt": "2026-06-23T14:40:27.352Z"
+    },
+    {
+      "id": "cmqqr5dwm00ad8i966vm7i8ta",
+      "eventId": "",
+      "kind": "🙋",
+      "text": "<b>OSVALDO VILLALBA</b> busca <span class=\"g\">Marti &amp; los Dálmatas 🐶</span>",
+      "actorId": "cmpd8ejuc0001s3hkoqeuthny",
+      "createdAt": "2026-06-23T14:41:12.358Z"
+    },
+    {
+      "id": "cmqqr5h3b00ar8i96r8y3ifbc",
+      "eventId": "",
+      "kind": "🤝",
+      "text": "<b>PABLO GOTZ</b> le pasó <span class=\"g\">Marti &amp; los Dálmatas 🐶</span> a <b>OSVALDO VILLALBA</b> — ¡genia!",
+      "actorId": "cmoxjg1rp0009igo1jm7s9vqi",
+      "createdAt": "2026-06-23T14:41:16.488Z"
+    },
+    {
+      "id": "cmqqr69rj00bh8i96vrvwfnns",
+      "eventId": "",
+      "kind": "🔄",
+      "text": "<b>OSVALDO VILLALBA</b> y <b>PABLO GOTZ</b> cambiaron figus",
+      "actorId": "cmpd8ejuc0001s3hkoqeuthny",
+      "createdAt": "2026-06-23T14:41:53.648Z"
+    },
+    {
+      "id": "cmqqr7j8l00d18i96heyndfkh",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>OSVALDO VILLALBA</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 1 repetida",
+      "actorId": "cmpd8ejuc0001s3hkoqeuthny",
+      "createdAt": "2026-06-23T14:42:52.582Z"
+    },
+    {
+      "id": "cmqqrbddi00ff8i96btbvfm7m",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>OSVALDO VILLALBA</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 4 repetidas",
+      "actorId": "cmpd8ejuc0001s3hkoqeuthny",
+      "createdAt": "2026-06-23T14:45:51.606Z"
+    },
+    {
+      "id": "cmqqrd05l00fn8i96cy79dg4s",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>PABLO GOTZ</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 4 repetidas",
+      "actorId": "cmoxjg1rp0009igo1jm7s9vqi",
+      "createdAt": "2026-06-23T14:47:07.785Z"
+    },
+    {
+      "id": "cmqqrdw7300g78i96r0kckl98",
+      "eventId": "",
+      "kind": "🔄",
+      "text": "<b>OSVALDO VILLALBA</b> y <b>PABLO GOTZ</b> cambiaron figus",
+      "actorId": "cmpd8ejuc0001s3hkoqeuthny",
+      "createdAt": "2026-06-23T14:47:49.312Z"
+    },
+    {
+      "id": "cmqqrg9bh00hr8i964b22m03e",
+      "eventId": "",
+      "kind": "🙋",
+      "text": "<b>OSVALDO VILLALBA</b> busca <span class=\"g\">Marti en el Bayou 🐸</span>",
+      "actorId": "cmpd8ejuc0001s3hkoqeuthny",
+      "createdAt": "2026-06-23T14:49:39.629Z"
+    },
+    {
+      "id": "cmqqx2zg40001k3rq9fcn2kt9",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>OSVALDO VILLALBA</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 2 repetidas",
+      "actorId": "cmpd8ejuc0001s3hkoqeuthny",
+      "createdAt": "2026-06-23T17:27:18.004Z"
+    },
+    {
+      "id": "cmqqx2zgl0002k3rqwvxllqn2",
+      "eventId": "",
+      "kind": "✨",
+      "text": "<span class=\"r\">¡OSVALDO VILLALBA sacó una dorada!</span> Marti & Stitch 💙 — colgante RGB 📿",
+      "actorId": "cmpd8ejuc0001s3hkoqeuthny",
+      "createdAt": "2026-06-23T17:27:18.021Z"
+    },
+    {
+      "id": "cmqqyxbbg000ba2p2fgcbzyvb",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>OSVALDO VILLALBA</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 10 repetidas",
+      "actorId": "cmpd8ejuc0001s3hkoqeuthny",
+      "createdAt": "2026-06-23T18:18:52.684Z"
+    },
+    {
+      "id": "cmqqyxbbz000ca2p2od4v57d6",
+      "eventId": "",
+      "kind": "✨",
+      "text": "<span class=\"r\">¡OSVALDO VILLALBA sacó una dorada!</span> Marti & Simba 🦁 — colgante RGB 📿",
+      "actorId": "cmpd8ejuc0001s3hkoqeuthny",
+      "createdAt": "2026-06-23T18:18:52.704Z"
+    },
+    {
+      "id": "cmqr0brul000213nw7uob1ns2",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>OSVALDO VILLALBA</b> abrió un sobre — <span class=\"g\">2 nuevas</span>, 3 repetidas",
+      "actorId": "cmpd8ejuc0001s3hkoqeuthny",
+      "createdAt": "2026-06-23T18:58:06.909Z"
+    },
+    {
+      "id": "cmqr0brv1000313nw45jfi198",
+      "eventId": "",
+      "kind": "✨",
+      "text": "<span class=\"r\">¡OSVALDO VILLALBA sacó una dorada!</span> Marti Enredada 🏮 — ¡ganó Funko Pop Enredadas! 🎁",
+      "actorId": "cmpd8ejuc0001s3hkoqeuthny",
+      "createdAt": "2026-06-23T18:58:06.925Z"
+    },
+    {
+      "id": "cmqr0brvd000413nwr7ry70mj",
+      "eventId": "",
+      "kind": "🎆",
+      "text": "<b>OSVALDO VILLALBA</b> completó el Reino 👑 — ¡ganó Funko Pop Dante!",
+      "actorId": "cmpd8ejuc0001s3hkoqeuthny",
+      "createdAt": "2026-06-23T18:58:06.938Z"
+    },
+    {
+      "id": "cmqr0yncq0001t3oo5qh75oki",
+      "eventId": "",
+      "kind": "🎁",
+      "text": "<b>OSVALDO VILLALBA</b> abrió un sobre — <span class=\"g\">0 nuevas</span>, 4 repetidas",
+      "actorId": "cmpd8ejuc0001s3hkoqeuthny",
+      "createdAt": "2026-06-23T19:15:54.170Z"
+    }
+  ],
+  "trade": [
+    {
+      "id": "cmqgvtd100014n3r0lvzwu2oe",
+      "eventId": "",
+      "guestId": "ahsh",
+      "guestName": "Hola",
+      "figId": 5,
+      "status": "open",
+      "createdAt": "2026-06-16T16:54:07.668Z"
+    },
+    {
+      "id": "cmqh5xorj00009er6b02cq744",
+      "eventId": "",
+      "guestId": "ycpgk9hljw0mxmz0rih25bj9",
+      "guestName": "Sabtiago",
+      "figId": 12,
+      "status": "open",
+      "createdAt": "2026-06-16T21:37:25.663Z"
+    },
+    {
+      "id": "cmqmlifh4001wkog2hm7a1v7d",
+      "eventId": "",
+      "guestId": "idcom",
+      "guestName": "Jajs",
+      "figId": 10,
+      "status": "done",
+      "createdAt": "2026-06-20T16:52:18.520Z"
+    },
+    {
+      "id": "cmqp8r5kq000kkifjqnhnnms9",
+      "eventId": "",
+      "guestId": "ads",
+      "guestName": "asd",
+      "figId": 6,
+      "status": "open",
+      "createdAt": "2026-06-22T13:18:29.114Z"
+    },
+    {
+      "id": "cmqqqw61u006g8i96ufs62p43",
+      "eventId": "",
+      "guestId": "cmoxjg1rp0009igo1jm7s9vqi",
+      "guestName": "PABLO GOTZ",
+      "figId": 8,
+      "status": "cancelled",
+      "createdAt": "2026-06-23T14:34:02.274Z"
+    },
+    {
+      "id": "cmqqr5dw700ac8i96cq5q4isz",
+      "eventId": "",
+      "guestId": "cmpd8ejuc0001s3hkoqeuthny",
+      "guestName": "OSVALDO VILLALBA",
+      "figId": 4,
+      "status": "done",
+      "createdAt": "2026-06-23T14:41:12.343Z"
+    },
+    {
+      "id": "cmqqrg9b500hq8i96hpnnmw1l",
+      "eventId": "",
+      "guestId": "cmpd8ejuc0001s3hkoqeuthny",
+      "guestName": "OSVALDO VILLALBA",
+      "figId": 15,
+      "status": "open",
+      "createdAt": "2026-06-23T14:49:39.617Z"
+    }
+  ],
+  "gold": [
+    {
+      "id": "cmqgvs9ss0002n3r00t75f8cy",
+      "eventId": "",
+      "goldIdx": 0,
+      "winnerId": "cmpd8ejuc0001s3hkoqeuthny",
+      "winnerName": "OSVALDO VILLALBA",
+      "wonAt": "2026-06-23T17:27:17.991Z",
+      "deliveredAt": "2026-06-23T17:30:09.930Z"
+    },
+    {
+      "id": "cmqgvs9ss0003n3r0bfqxj2jw",
+      "eventId": "",
+      "goldIdx": 1,
+      "winnerId": "cmpd8ejuc0001s3hkoqeuthny",
+      "winnerName": "OSVALDO VILLALBA",
+      "wonAt": "2026-06-23T18:18:52.672Z",
+      "deliveredAt": null
+    },
+    {
+      "id": "cmqgvs9ss0004n3r03giphdol",
+      "eventId": "",
+      "goldIdx": 2,
+      "winnerId": "cmpd8ejuc0001s3hkoqeuthny",
+      "winnerName": "OSVALDO VILLALBA",
+      "wonAt": "2026-06-23T18:58:06.873Z",
+      "deliveredAt": null
+    }
+  ],
+  "prize": [
+    {
+      "id": "cmqgvsakq0006n3r0jnsy6i5f",
+      "eventId": "",
+      "prizeKey": "reloj",
+      "winnerId": null,
+      "winnerName": null,
+      "claimedAt": null,
+      "deliveredAt": null
+    },
+    {
+      "id": "cmqgvsakq0007n3r0xm26hi1y",
+      "eventId": "",
+      "prizeKey": "peluche",
+      "winnerId": null,
+      "winnerName": null,
+      "claimedAt": null,
+      "deliveredAt": null
+    },
+    {
+      "id": "cmqgvsakq0005n3r0cerfg32v",
+      "eventId": "",
+      "prizeKey": "camara",
+      "winnerId": "idrandom",
+      "winnerName": "pepe",
+      "claimedAt": "2026-06-22T13:26:04.573Z",
+      "deliveredAt": null
+    },
+    {
+      "id": "cmqqx0mmc0004shx4xr14jx15",
+      "eventId": "",
+      "prizeKey": "funko_dante_1",
+      "winnerId": null,
+      "winnerName": null,
+      "claimedAt": null,
+      "deliveredAt": null
+    },
+    {
+      "id": "cmqqx0mmc0005shx4vebeouad",
+      "eventId": "",
+      "prizeKey": "funko_dante_2",
+      "winnerId": null,
+      "winnerName": null,
+      "claimedAt": null,
+      "deliveredAt": null
+    },
+    {
+      "id": "cmqqx0mmc0006shx45dla8dpl",
+      "eventId": "",
+      "prizeKey": "minnie_1",
+      "winnerId": null,
+      "winnerName": null,
+      "claimedAt": null,
+      "deliveredAt": null
+    },
+    {
+      "id": "cmqqx0mmc0007shx4md80mcxn",
+      "eventId": "",
+      "prizeKey": "minnie_2",
+      "winnerId": null,
+      "winnerName": null,
+      "claimedAt": null,
+      "deliveredAt": null
+    },
+    {
+      "id": "cmqqx0mmc0008shx4mbeennhf",
+      "eventId": "",
+      "prizeKey": "minnie_3",
+      "winnerId": null,
+      "winnerName": null,
+      "claimedAt": null,
+      "deliveredAt": null
+    },
+    {
+      "id": "cmqqz37q5000511ifh19tczz0",
+      "eventId": "",
+      "prizeKey": "minnie",
+      "winnerId": null,
+      "winnerName": null,
+      "claimedAt": null,
+      "deliveredAt": null
+    },
+    {
+      "id": "cmqqz37q5000411if963qzdtj",
+      "eventId": "",
+      "prizeKey": "funko_dante",
+      "winnerId": "cmpd8ejuc0001s3hkoqeuthny",
+      "winnerName": "OSVALDO VILLALBA",
+      "claimedAt": "2026-06-23T18:58:06.898Z",
+      "deliveredAt": null
+    }
+  ],
+  "inventory": [
+    {
+      "id": "cmqqx20lf000allxkr68bsz45",
+      "eventId": "",
+      "key": "gift_duration",
+      "label": "Timer sobre regalo (min)",
+      "emoji": "⏱️",
+      "total": 10,
+      "delivered": 0,
+      "createdAt": "2026-06-23T17:26:32.836Z"
+    },
+    {
+      "id": "cmqibyg380006dj1mpu1mzxvg",
+      "eventId": "",
+      "key": "colgante",
+      "label": "Colgante RGB",
+      "emoji": "📿",
+      "total": 10,
+      "delivered": 0,
+      "createdAt": "2026-06-17T17:13:44.948Z"
+    },
+    {
+      "id": "cmqqx20mn000bllxkdrp29hnk",
+      "eventId": "",
+      "key": "force_gold",
+      "label": "Force Gold pendientes",
+      "emoji": "🌟",
+      "total": 3,
+      "delivered": 3,
+      "createdAt": "2026-06-23T17:26:32.879Z"
+    }
+  ],
+  "cardStock": []
+}

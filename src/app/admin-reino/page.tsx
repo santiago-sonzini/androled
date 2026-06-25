@@ -13,7 +13,13 @@ import {
   giveGiftToGuest,
   addForceGold,
   setGiftDuration,
+  setDoraProb,
 } from "../actions/admin";
+import {
+  crearCodigosEscondido,
+  loadEntrevista,
+  type EntrevistaCodigo,
+} from "../actions/entrevista";
 import { lanzarCodigo } from "../actions/pantalla";
 
 // ── supabase realtime (señal de invalidación) ──
@@ -26,7 +32,7 @@ function getSupabase(): SupabaseClient | null {
   if (!_sb) _sb = createClient(url, key, { realtime: { params: { eventsPerSecond: 5 } } });
   return _sb;
 }
-const TABLES = ["FigusAlbum", "FigusPrize", "FigusGold", "FigusInventory"] as const;
+const TABLES = ["FigusAlbum", "FigusPrize", "FigusGold", "FigusInventory", "FigusCodigo"] as const;
 
 const AVATAR_GLYPHS: Record<string, string> = {
   Princesa: "👑", Hada: "🧚", Mariposa: "🦋", Rosa: "🌹",
@@ -107,6 +113,12 @@ const CSS = `
 .ar-fig-cell.owned { background: rgba(140,230,176,.16); border: 1px solid rgba(140,230,176,.35); color: #8ce6b0; }
 .ar-fig-cell.owned.dupe { background: rgba(246,221,153,.14); border-color: rgba(246,221,153,.4); color: #f6dd99; }
 .ar-fig-cell.missing { background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08); color: #6a6080; }
+.ar-esc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(94px, 1fr)); gap: 8px; width: 100%; }
+.ar-esc { background: rgba(12,9,32,.5); border: 1px solid rgba(246,221,153,.18); border-radius: 10px; padding: 8px 6px; text-align: center; }
+.ar-esc.used { opacity: .55; }
+.ar-esc .code { display: block; font-weight: 900; font-size: 18px; letter-spacing: .12em; color: #f6dd99; }
+.ar-esc.used .code { color: #9ad7b3; text-decoration: line-through; }
+.ar-esc .meta { display: block; font-size: 10px; color: #b6abd4; font-weight: 700; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 `;
 
 export default function AdminReinoPage() {
@@ -118,6 +130,10 @@ export default function AdminReinoPage() {
   const [codeVal, setCodeVal] = useState("3");
   const [albumModal, setAlbumModal] = useState<string | null>(null);
   const [giftMinutes, setGiftMinutes] = useState("10");
+  const [doraPct, setDoraPct] = useState("6");
+  const [escondidos, setEscondidos] = useState<EntrevistaCodigo[]>([]);
+  const [escCount, setEscCount] = useState("10");
+  const [escValue, setEscValue] = useState("2");
   const msgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -135,7 +151,9 @@ export default function AdminReinoPage() {
 
   const refresh = useCallback(async () => {
     try {
-      setData(await loadAdmin());
+      const [d, esc] = await Promise.all([loadAdmin(), loadEntrevista("carta")]);
+      setData(d);
+      setEscondidos(esc);
     } catch {
       toast("Error cargando el panel");
     }
@@ -143,6 +161,7 @@ export default function AdminReinoPage() {
 
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { if (data) setGiftMinutes(String(data.giftDuration ?? 10)); }, [data?.giftDuration]);
+  useEffect(() => { if (data) setDoraPct(String(data.doraProb ?? 6)); }, [data?.doraProb]);
 
   // realtime
   useEffect(() => {
@@ -174,6 +193,32 @@ export default function AdminReinoPage() {
     },
     [busy, refresh, toast],
   );
+
+  const generarEscondidos = useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await crearCodigosEscondido(parseInt(escCount) || 10, parseInt(escValue) || 2);
+      if (!r.ok) toast(r.error);
+      else toast(`🃏 Generaste ${r.codes.length} códigos`);
+      await refresh();
+    } catch {
+      toast("Error de conexión");
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, escCount, escValue, refresh, toast]);
+
+  const copiarEscondidos = useCallback(async () => {
+    const libres = escondidos.filter((c) => !c.redeemed).map((c) => c.code);
+    if (!libres.length) { toast("No hay códigos libres para copiar"); return; }
+    try {
+      await navigator.clipboard.writeText(libres.join("\n"));
+      toast(`📋 Copiados ${libres.length} códigos`);
+    } catch {
+      toast("No se pudo copiar al portapapeles");
+    }
+  }, [escondidos, toast]);
 
   const guests = useMemo(() => data?.guests ?? [], [data]);
   const filteredGuests = useMemo(() => {
@@ -355,6 +400,30 @@ export default function AdminReinoPage() {
         </div>
         <div className="ar-card" style={{ alignItems: "flex-end" }}>
           <div className="info">
+            <div className="t">🎲 Probabilidad de dorada</div>
+            <div className="s">Chance de que un sobre traiga dorada (0–100%). Actual: <b>{data.doraProb}%</b>. Quien completa el álbum o ya tiene una dorada no entra al sorteo.</div>
+          </div>
+          <div className="ar-row">
+            <input
+              className="ar-input"
+              style={{ width: 70 }}
+              inputMode="numeric"
+              value={doraPct}
+              onChange={(e) => setDoraPct(e.target.value)}
+              placeholder="6"
+            />
+            <span className="s">%</span>
+            <button
+              className="ar-btn sm"
+              disabled={busy}
+              onClick={() => void run(() => setDoraProb(parseInt(doraPct) || 0), "🎲 Probabilidad actualizada")}
+            >
+              Guardar
+            </button>
+          </div>
+        </div>
+        <div className="ar-card" style={{ alignItems: "flex-end" }}>
+          <div className="info">
             <div className="t">⏱️ Timer sobre regalo</div>
             <div className="s">Minutos que tarda en aparecer el sobre regalo. Actual: <b>{data.giftDuration} min</b></div>
           </div>
@@ -383,6 +452,44 @@ export default function AdminReinoPage() {
           </div>
           <a className="ar-btn sm ghost" href="/entrevista" target="_blank" rel="noopener noreferrer">Ir a entrevistas →</a>
         </div>
+
+        {/* sobres escondidos */}
+        <div className="ar-sec-h">🃏 Sobres escondidos</div>
+        <div className="ar-card" style={{ alignItems: "flex-end" }}>
+          <div className="info" style={{ minWidth: 0 }}>
+            <div className="t">Generar códigos para imprimir</div>
+            <div className="s">
+              Cada código se canjea <b>una sola vez</b>. Imprimilos atrás de las cartas físicas escondidas;
+              el invitado lo tipea en su app, en <b>“Sobre escondido”</b>.
+            </div>
+            <div className="ar-row" style={{ marginTop: 8 }}>
+              <span className="s">Cantidad</span>
+              <input className="ar-input" style={{ width: 64 }} inputMode="numeric" value={escCount} onChange={(e) => setEscCount(e.target.value)} />
+              <span className="s">Figus c/u</span>
+              <input className="ar-input" style={{ width: 64 }} inputMode="numeric" value={escValue} onChange={(e) => setEscValue(e.target.value)} />
+            </div>
+          </div>
+          <button className="ar-btn" disabled={busy} onClick={() => void generarEscondidos()}>Generar</button>
+        </div>
+        {escondidos.length > 0 && (
+          <div className="ar-card" style={{ display: "block" }}>
+            <div className="ar-row" style={{ justifyContent: "space-between", marginBottom: 10 }}>
+              <div className="s">
+                <b style={{ color: "#f6dd99" }}>{escondidos.filter((c) => !c.redeemed).length}</b> libres ·{" "}
+                {escondidos.filter((c) => c.redeemed).length} canjeados
+              </div>
+              <button className="ar-btn sm ghost" onClick={() => void copiarEscondidos()}>📋 Copiar libres</button>
+            </div>
+            <div className="ar-esc-grid">
+              {escondidos.map((c) => (
+                <div key={c.id} className={`ar-esc${c.redeemed ? " used" : ""}`} title={c.redeemed ? `Canjeado por ${c.redeemedByName}` : `Libre · +${c.value} figus`}>
+                  <span className="code">{c.code}</span>
+                  <span className="meta">{c.redeemed ? `✓ ${c.redeemedByName}` : `+${c.value} figus`}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* invitados */}
         <div className="ar-sec-h">Invitados ({guests.length})</div>

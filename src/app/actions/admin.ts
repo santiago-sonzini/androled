@@ -46,6 +46,12 @@ async function ensureSeed() {
     update: {},
     create: { eventId: EVENT_ID, key: "force_gold", label: "Force Gold pendientes", emoji: "🌟", total: 0 },
   })
+  // Config: probabilidad de dorada (porcentaje). Default 6%.
+  await db.figusInventory.upsert({
+    where: { eventId_key: { eventId: EVENT_ID, key: "dora_prob" } },
+    update: {},
+    create: { eventId: EVENT_ID, key: "dora_prob", label: "Probabilidad de dorada (%)", emoji: "🎲", total: 6 },
+  })
 }
 
 // ─────────────────────────────────────────────
@@ -107,6 +113,8 @@ export async function loadAdmin() {
 
   const giftDurationItem = inventory.find((i) => i.key === "gift_duration")
   const forceGoldItem = inventory.find((i) => i.key === "force_gold")
+  const doraProbItem = inventory.find((i) => i.key === "dora_prob")
+  const CONFIG_KEYS = new Set(["force_gold", "gift_duration", "dora_prob"])
 
   return {
     stats: {
@@ -129,14 +137,19 @@ export async function loadAdmin() {
       }
     }),
     golds: golds2,
-    inventory: inventory.map((i) => ({
-      key: i.key,
-      label: i.label,
-      emoji: i.emoji,
-      total: i.total,
-      delivered: i.delivered,
-    })),
+    // El inventario de regalos NO incluye las claves de config (force_gold,
+    // gift_duration, dora_prob): no son regalos físicos, tienen su propia UI.
+    inventory: inventory
+      .filter((i) => !CONFIG_KEYS.has(i.key))
+      .map((i) => ({
+        key: i.key,
+        label: i.label,
+        emoji: i.emoji,
+        total: i.total,
+        delivered: i.delivered,
+      })),
     giftDuration: giftDurationItem?.total ?? 10,
+    doraProb: doraProbItem?.total ?? 6,
     forceGoldRemaining: forceGoldItem ? Math.max(0, forceGoldItem.total - forceGoldItem.delivered) : 0,
   }
 }
@@ -277,8 +290,21 @@ export async function giveGiftToGuest(guestId: string): Promise<R> {
 // ─────────────────────────────────────────────
 
 export async function addForceGold(count: number): Promise<R> {
-  const n = Math.max(1, Math.min(20, Math.round(count) || 3))
+  const want = Math.max(1, Math.min(20, Math.round(count) || 3))
   try {
+    // No forzar más doradas de las que quedan libres: si no, el sobrante queda
+    // "pendiente" para siempre (no hay fila de dorada que reclamar). El cupo es
+    // doradas libres − force ya pendiente.
+    const [freeGolds, fg] = await Promise.all([
+      db.figusGold.count({ where: { eventId: EVENT_ID, winnerId: null } }),
+      db.figusInventory.findUnique({ where: { eventId_key: { eventId: EVENT_ID, key: "force_gold" } } }),
+    ])
+    const pending = fg ? Math.max(0, fg.total - fg.delivered) : 0
+    const room = Math.max(0, freeGolds - pending)
+    if (room <= 0) {
+      return { ok: false, error: pending > 0 ? "Ya hay doradas forzadas pendientes" : "No quedan doradas libres" }
+    }
+    const n = Math.min(want, room)
     await db.figusInventory.upsert({
       where: { eventId_key: { eventId: EVENT_ID, key: "force_gold" } },
       update: { total: { increment: n } },
@@ -309,5 +335,25 @@ export async function setGiftDuration(minutes: number): Promise<R> {
   } catch (e) {
     console.error("[setGiftDuration]", e)
     return { ok: false, error: "No se pudo actualizar el timer" }
+  }
+}
+
+// ─────────────────────────────────────────────
+// DORA PROB — probabilidad de que salga una dorada (porcentaje 0-100)
+// ─────────────────────────────────────────────
+
+export async function setDoraProb(percent: number): Promise<R> {
+  const p = Math.max(0, Math.min(100, Math.round(percent)))
+  try {
+    await db.figusInventory.upsert({
+      where: { eventId_key: { eventId: EVENT_ID, key: "dora_prob" } },
+      update: { total: p },
+      create: { eventId: EVENT_ID, key: "dora_prob", label: "Probabilidad de dorada (%)", emoji: "🎲", total: p },
+    })
+    revalidatePath("/admin-reino")
+    return { ok: true }
+  } catch (e) {
+    console.error("[setDoraProb]", e)
+    return { ok: false, error: "No se pudo actualizar la probabilidad" }
   }
 }

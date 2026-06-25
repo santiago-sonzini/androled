@@ -75,6 +75,31 @@ export async function crearCodigoEntrevista(
   }
 }
 
+// ─────────────────────────────────────────────
+// LOTE DE SOBRES ESCONDIDOS — genera N códigos single-use (packKind="carta")
+// para imprimir atrás de cartas físicas. Cada uno se canjea UNA sola vez.
+// ─────────────────────────────────────────────
+
+export async function crearCodigosEscondido(
+  count: number,
+  value: number,
+): Promise<{ ok: true; codes: { code: string; value: number }[] } | { ok: false; error: string }> {
+  const n = Math.max(1, Math.min(80, Math.round(count) || 10))
+  const figus = Math.min(10, Math.max(1, Math.round(value) || 2))
+  try {
+    const codes: { code: string; value: number }[] = []
+    for (let i = 0; i < n; i++) {
+      const r = await crearCodigoEntrevista(figus, "carta")
+      if (r.ok) codes.push({ code: r.code, value: r.value })
+    }
+    if (!codes.length) return { ok: false, error: "No se pudieron generar códigos" }
+    return { ok: true, codes }
+  } catch (err) {
+    console.error("[crearCodigosEscondido]", err)
+    return { ok: false, error: "No se pudieron generar los códigos" }
+  }
+}
+
 export interface EntrevistaCodigo {
   id: string
   code: string
@@ -90,11 +115,11 @@ export interface EntrevistaCodigo {
 // canje, para que el entrevistador vea en vivo cuáles ya se usaron.
 // ─────────────────────────────────────────────
 
-export async function loadEntrevista(): Promise<EntrevistaCodigo[]> {
+export async function loadEntrevista(packKind?: CodigoKind): Promise<EntrevistaCodigo[]> {
   const codigos = await db.figusCodigo.findMany({
-    where: { eventId: EVENT_ID, singleUse: true },
+    where: { eventId: EVENT_ID, singleUse: true, ...(packKind ? { packKind } : {}) },
     orderBy: { createdAt: "desc" },
-    take: 40,
+    take: packKind === "carta" ? 300 : 40,
     select: { id: true, code: true, value: true, packKind: true, usedBy: true, createdAt: true },
   })
 

@@ -7,20 +7,17 @@ import {
   esc,
   claimCompletion,
   serializable,
+  uniquesOf,
+  TOTAL_FIGS,
   GOLD_META,
   PRIZE_META,
 } from "@/server/figus"
 
-// Probabilidad de dorada por tipo de sobre. Acotada por el stock global
-// (3 cartas): una vez reclamadas, no salen más aunque el roll pegue.
-const DOR_BY_KEY: Record<string, number> = {
-  start: 0.05,
-  codigo: 0.06,
-  carta: 0.08,
-  gift: 0.06,
-  trivia: 0.06,
-  ig: 0,
-}
+// Probabilidad de dorada (global, configurable desde admin vía la clave de
+// inventario "dora_prob", guardada como porcentaje). Default 6%. El sobre de IG
+// nunca da dorada (es un regalo por seguir). Acotada por el stock global de 3
+// cartas: una vez reclamadas, no salen más aunque el roll pegue.
+const DORA_PROB_DEFAULT = 0.06
 
 type Rarity = "comun" | "rara" | "epica" | "m"
 
@@ -337,32 +334,57 @@ export async function openPack(guestId: string, token: string) {
       data: { counts, packsLeft: newPacksLeft },
     })
 
-    // Dorada: roll + claim atómico. Si hay "force_gold" pendientes en inventario,
-    // la probabilidad sube a 1 y se descuenta el contador.
+    // Dorada: roll + claim atómico. Reglas:
+    //  • Un mismo invitado NO puede tener 2 doradas → si ya tiene una, no roll.
+    //  • Quien COMPLETA el álbum no recibe dorada (ya gana premio de completar).
+    //  • "force_gold" pendiente sube la probabilidad a 1.
+    //  • El force se consume SOLO cuando se entrega una dorada de verdad, así un
+    //    sobre forzado que no puede entregarla (ya tiene una / completó / no
+    //    quedan) no la gasta y la próxima va a otro invitado.
     let goldWon: number | null = null
-    let baseDor = DOR_BY_KEY[key] ?? 0.06
-    const fgItem = await tx.figusInventory.findUnique({
-      where: { eventId_key: { eventId: EVENT_ID, key: "force_gold" } },
+
+    // `counts` ya tiene las figus de este sobre → uniques refleja el estado
+    // final. Si con este sobre completa (o ya estaba completo), no hay dorada.
+    const completaConEste = uniquesOf(counts) >= TOTAL_FIGS
+
+    const alreadyHasGold = await tx.figusGold.findFirst({
+      where: { eventId: EVENT_ID, winnerId: guestId },
+      select: { id: true },
     })
-    const forceGoldRemaining = fgItem ? Math.max(0, fgItem.total - fgItem.delivered) : 0
-    if (forceGoldRemaining > 0) {
-      baseDor = 1
-      await tx.figusInventory.update({
-        where: { eventId_key: { eventId: EVENT_ID, key: "force_gold" } },
-        data: { delivered: { increment: 1 } },
-      })
-    }
-    if (Math.random() < baseDor) {
-      const gold = await tx.figusGold.findFirst({
-        where: { eventId: EVENT_ID, winnerId: null },
-        orderBy: { goldIdx: "asc" },
-      })
-      if (gold) {
-        const claim = await tx.figusGold.updateMany({
-          where: { id: gold.id, winnerId: null },
-          data: { winnerId: guestId, winnerName: name, wonAt: new Date() },
+
+    if (!alreadyHasGold && !completaConEste) {
+      const [fgItem, dpItem] = await Promise.all([
+        tx.figusInventory.findUnique({
+          where: { eventId_key: { eventId: EVENT_ID, key: "force_gold" } },
+        }),
+        tx.figusInventory.findUnique({
+          where: { eventId_key: { eventId: EVENT_ID, key: "dora_prob" } },
+        }),
+      ])
+      const forceGold = fgItem ? fgItem.total - fgItem.delivered > 0 : false
+      const doraProb = dpItem ? Math.max(0, Math.min(1, dpItem.total / 100)) : DORA_PROB_DEFAULT
+      const dor = forceGold ? 1 : key === "ig" ? 0 : doraProb
+
+      if (Math.random() < dor) {
+        const gold = await tx.figusGold.findFirst({
+          where: { eventId: EVENT_ID, winnerId: null },
+          orderBy: { goldIdx: "asc" },
         })
-        if (claim.count > 0) goldWon = gold.goldIdx
+        if (gold) {
+          const claim = await tx.figusGold.updateMany({
+            where: { id: gold.id, winnerId: null },
+            data: { winnerId: guestId, winnerName: name, wonAt: new Date() },
+          })
+          if (claim.count > 0) {
+            goldWon = gold.goldIdx
+            if (forceGold) {
+              await tx.figusInventory.update({
+                where: { eventId_key: { eventId: EVENT_ID, key: "force_gold" } },
+                data: { delivered: { increment: 1 } },
+              })
+            }
+          }
+        }
       }
     }
 
