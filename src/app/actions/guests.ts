@@ -621,7 +621,16 @@ export async function getGuestById(id: string) {
 
 export async function getAllGuests() {
   try {
-    const guests = await db.androLedGuest.findMany({ });
+    // Ocultar filas basura (bots que entran a /[id] sin cargar nada):
+    // solo mostramos a quien tenga nombre O foto (selfie).
+    const guests = await db.androLedGuest.findMany({
+      where: {
+        OR: [
+          { name: { not: "" } },
+          { selfie: { not: null } },
+        ],
+      },
+    });
     return guests;
   } catch (error) {
     console.error("Unexpected error:", error);

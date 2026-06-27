@@ -63,6 +63,16 @@ export async function loadAdmin() {
 
   const [albums, prizes, golds, inventory] = await Promise.all([
     db.figusAlbum.findMany({
+      // Ocultar jugadores basura (bots que entran a /[id] sin cargar nada):
+      // solo los que tengan nombre O foto (selfie).
+      where: {
+        guest: {
+          OR: [
+            { name: { not: "" } },
+            { selfie: { not: null } },
+          ],
+        },
+      },
       select: {
         guestId: true,
         counts: true,
