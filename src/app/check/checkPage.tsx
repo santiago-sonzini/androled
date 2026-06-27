@@ -17,6 +17,31 @@ function genId() {
   return "local_" + Math.random().toString(36).slice(2, 12);
 }
 
+// Nombre temático (película) de cada mesa. La DB solo guarda el número de
+// mesa; este mapa traduce número → nombre para mostrarlo en el escaneo.
+const MESA_NOMBRES: Record<number, string> = {
+  1: "Enredados",
+  2: "Moana",
+  3: "Ratatoullie",
+  4: "Rey Leon",
+  5: "Cars",
+  6: "Monster inc",
+  7: "La princesa y el sapo",
+  8: "Pocahontas",
+  9: "Peter pan",
+  10: "Blanca nieves",
+  11: "Winnie the pooh",
+  12: "Aladin",
+  13: "Cenicienta",
+  14: "Coco",
+  15: "Dumbo",
+  16: "101 Dalmatas",
+  17: "Malefica",
+  18: "La bella y la bestia",
+  19: "La sirenita",
+  20: "Lilo & Stitch",
+};
+
 type ScanStatus = "idle" | "scanning" | "reading" | "writing" | "match" | "mismatch" | "error" | "continuous" | "devolucion";
 
 export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
@@ -348,8 +373,13 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
             {continuousGuest ? (
               <>
                 <div style={{ fontWeight: 700, fontSize: "1.15rem", color: "#111" }}>{continuousGuest.name}</div>
+                {continuousGuest.mesa && (
+                  <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "#6b5ff8", marginTop: "0.15rem" }}>
+                    Mesa {continuousGuest.mesa}
+                    {MESA_NOMBRES[continuousGuest.mesa] ? ` · ${MESA_NOMBRES[continuousGuest.mesa]}` : ""}
+                  </div>
+                )}
                 <div style={{ display: "flex", gap: "1rem", fontSize: "0.78rem", color: "#555", marginTop: "0.2rem" }}>
-                  {continuousGuest.mesa && <span>Mesa <strong>{continuousGuest.mesa}</strong></span>}
                   <span>Pulsera <strong>#{continuousGuest.nroPulsera ?? "—"}</strong></span>
                   <span style={{ color: continuousGuest.pulseraEntregada ? "#16a34a" : "#f59e0b" }}>
                     {continuousGuest.pulseraEntregada ? "✓ Entregada" : "⏳ Pendiente"}
