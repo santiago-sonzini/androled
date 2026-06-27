@@ -64,7 +64,20 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
   const [devolucionGuest, setDevolucionGuest] = useState<AndroLedGuest | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  // Escaneo de QR → grabar NFC con la misma URL/ID
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [qrStatus, setQrStatus] = useState<"scanning" | "found" | "writing" | "done" | "error">("scanning");
+  const [qrMessage, setQrMessage] = useState("");
+  const [qrScannedId, setQrScannedId] = useState<string | null>(null);
+  const [qrGuest, setQrGuest] = useState<AndroLedGuest | null>(null);
+  const [qrPickSearch, setQrPickSearch] = useState("");
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const qrStreamRef = useRef<MediaStream | null>(null);
+  const qrRafRef = useRef<number | null>(null);
+  const qrScanningRef = useRef(false);
+
   const isSupported = typeof window !== "undefined" && "NDEFReader" in window;
+  const isQrSupported = typeof window !== "undefined" && "BarcodeDetector" in window;
 
   function addLog(msg: string) {
     setDebugLogs(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev].slice(0, 20));
@@ -309,6 +322,94 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
     }
   }
 
+  function stopQrCamera() {
+    qrScanningRef.current = false;
+    if (qrRafRef.current != null) { cancelAnimationFrame(qrRafRef.current); qrRafRef.current = null; }
+    if (qrStreamRef.current) { qrStreamRef.current.getTracks().forEach(t => t.stop()); qrStreamRef.current = null; }
+    if (videoRef.current) videoRef.current.srcObject = null;
+  }
+
+  function onQrDetected(raw: string) {
+    stopQrCamera();
+    const trimmed = raw.trim();
+    const id = trimmed.includes("/") ? (trimmed.split("/").pop() || trimmed) : trimmed;
+    const guest = guests.find(g => g.id === id) ?? null;
+    setQrScannedId(id);
+    setQrGuest(guest);
+    setQrStatus("found");
+    setQrMessage(guest ? `QR de ${guest.name}` : "QR leído (no está en la lista, igual se puede grabar)");
+    addLog(`[QR] Leído: ${trimmed} → ID ${id}`);
+  }
+
+  async function startQrScan() {
+    if (!isQrSupported) {
+      setShowQrModal(true);
+      setQrStatus("error");
+      setQrMessage("Este navegador no soporta lectura de QR (BarcodeDetector). Usá Chrome para Android.");
+      return;
+    }
+    setShowQrModal(true);
+    setQrStatus("scanning");
+    setQrMessage("Apuntá la cámara al QR...");
+    setQrScannedId(null);
+    setQrGuest(null);
+    setQrPickSearch("");
+    qrScanningRef.current = true;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      qrStreamRef.current = stream;
+      if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
+      const detector = new (window as any).BarcodeDetector({ formats: ["qr_code"] });
+      const loop = async () => {
+        if (!qrScanningRef.current) return;
+        const v = videoRef.current;
+        if (v && v.readyState >= 2) {
+          try {
+            const codes = await detector.detect(v);
+            if (codes && codes.length > 0) { onQrDetected(String(codes[0].rawValue)); return; }
+          } catch { /* frame sin código, seguir */ }
+        }
+        qrRafRef.current = requestAnimationFrame(loop);
+      };
+      qrRafRef.current = requestAnimationFrame(loop);
+    } catch (err: any) {
+      stopQrCamera();
+      setQrStatus("error");
+      setQrMessage(`No se pudo abrir la cámara: ${err.message}`);
+    }
+  }
+
+  async function writeNfcFromQr() {
+    if (!qrScannedId) return;
+    if (!isSupported) { setQrStatus("error"); setQrMessage("Web NFC no está soportado en este navegador."); return; }
+    try {
+      abortControllerRef.current = new AbortController();
+      setQrStatus("writing");
+      setQrMessage("Acercá la pulsera NFC para grabar...");
+      const ndef = new (window as any).NDEFReader();
+      await ndef.write(
+        { records: [{ recordType: "text", data: `https://www.androled.com/${qrScannedId}` }] },
+        { signal: abortControllerRef.current.signal }
+      );
+      setQrStatus("done");
+      setQrMessage(`✓ Pulsera grabada con el QR${qrGuest ? ` de ${qrGuest.name}` : ""}.`);
+      if (qrGuest) setCheckedId(qrGuest.id);
+    } catch (err: any) {
+      if (err.name === "AbortError") { setQrStatus("found"); setQrMessage("Grabado cancelado."); }
+      else { setQrStatus("error"); setQrMessage(`Error al grabar: ${err.message}`); }
+    }
+  }
+
+  function closeQrModal() {
+    stopQrCamera();
+    abortControllerRef.current?.abort();
+    setShowQrModal(false);
+    setQrScannedId(null);
+    setQrGuest(null);
+    setQrPickSearch("");
+    setQrMessage("");
+  }
+
   const filteredGuests = search.trim()
     ? guests.filter(g => {
         const q = normalize(search);
@@ -493,6 +594,15 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
           {scanStatus === "devolucion" ? "⏹ Detener modo devolución" : "↩ Iniciar modo devolución"}
         </button>
 
+        {/* Escanear QR → grabar NFC con la misma URL/ID */}
+        <button
+          onClick={startQrScan}
+          disabled={isBusy}
+          style={{ width: "100%", padding: "0.85rem", borderRadius: "10px", border: "1px solid rgba(107,95,248,0.4)", background: "rgba(107,95,248,0.06)", color: "#6b5ff8", fontSize: "0.88rem", fontFamily: "inherit", fontWeight: 600, cursor: isBusy ? "not-allowed" : "pointer", transition: "background 0.15s", letterSpacing: "0.04em", opacity: isBusy ? 0.4 : 1 }}
+        >
+          ⬚ Escanear QR → grabar pulsera
+        </button>
+
         {readGuest && scanStatus !== "continuous" && scanStatus !== "devolucion" && (
           <div style={{ background: "rgba(107,95,248,0.05)", border: "1px solid rgba(107,95,248,0.15)", borderRadius: "10px", padding: "0.85rem" }}>
             <div style={{ fontSize: "0.62rem", color: "#6b5ff8", letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: "0.4rem" }}>Pulsera leída</div>
@@ -585,6 +695,101 @@ export default function NFCPage({ guests: initialGuests }: NFCPageProps) {
       <footer style={{ fontSize: "0.65rem", color: "#bbb", textAlign: "center", paddingBottom: "1rem" }}>
         Requiere Chrome para Android · HTTPS
       </footer>
+
+      {showQrModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: "1.5rem" }}>
+          <div style={{ background: "#fff", borderRadius: "16px", padding: "1.5rem", width: "100%", maxWidth: "360px", display: "flex", flexDirection: "column", gap: "1rem", fontFamily: "'DM Mono','Courier New',monospace" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ fontSize: "0.65rem", letterSpacing: "0.25em", textTransform: "uppercase", color: "#6b5ff8" }}>Escanear QR</div>
+              <button onClick={closeQrModal} style={{ background: "transparent", border: "none", color: "#888", fontSize: "1.1rem", cursor: "pointer", fontFamily: "inherit", lineHeight: 1 }}>✕</button>
+            </div>
+
+            {/* Cámara: visible solo mientras escanea */}
+            <div style={{ position: "relative", borderRadius: "12px", overflow: "hidden", background: "#000", display: qrStatus === "scanning" ? "block" : "none", aspectRatio: "1 / 1" }}>
+              <video ref={videoRef} playsInline muted autoPlay style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              <div style={{ position: "absolute", inset: "18%", border: "2px solid rgba(255,255,255,0.85)", borderRadius: "12px", boxShadow: "0 0 0 100vmax rgba(0,0,0,0.25)" }} />
+            </div>
+
+            {/* Resultado del QR leído */}
+            {(qrStatus === "found" || qrStatus === "writing" || qrStatus === "done") && qrGuest && (
+              <div style={{ background: "#fafafa", border: "1px solid #e5e5e5", borderRadius: "10px", padding: "0.85rem" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "0.5rem" }}>
+                  <div style={{ fontWeight: 700, fontSize: "1rem" }}>{qrGuest.name}</div>
+                  {qrStatus !== "done" && (
+                    <button onClick={() => { setQrGuest(null); setQrPickSearch(""); setQrMessage("Elegí a quién asignar la pulsera."); }} style={{ background: "transparent", border: "none", color: "#6b5ff8", fontSize: "0.72rem", cursor: "pointer", fontFamily: "inherit", textDecoration: "underline", padding: 0, whiteSpace: "nowrap" }}>cambiar</button>
+                  )}
+                </div>
+                <div style={{ fontSize: "0.78rem", color: "#555", marginTop: "0.2rem", display: "flex", gap: "1rem", flexWrap: "wrap" }}>
+                  {qrGuest.mesa && <span>Mesa {qrGuest.mesa}{MESA_NOMBRES[qrGuest.mesa] ? ` · ${MESA_NOMBRES[qrGuest.mesa]}` : ""}</span>}
+                  {qrGuest.nroPulsera && <span>Pulsera #{qrGuest.nroPulsera}</span>}
+                </div>
+                <div style={{ fontSize: "0.62rem", color: "#bbb", marginTop: "0.4rem", wordBreak: "break-all" }}>ID: {qrScannedId}</div>
+              </div>
+            )}
+
+            {/* Picker: si el QR no matchea (o al "cambiar"), elegir invitado de la lista y asignar */}
+            {(qrStatus === "found" || qrStatus === "writing") && !qrGuest && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                <div style={{ fontSize: "0.7rem", color: "#6b5ff8", letterSpacing: "0.1em", textTransform: "uppercase" }}>Elegí a quién asignar</div>
+                <input
+                  autoFocus
+                  value={qrPickSearch}
+                  onChange={e => setQrPickSearch(e.target.value)}
+                  placeholder="Buscar invitado por nombre..."
+                  style={inputStyle}
+                />
+                <div style={{ maxHeight: "190px", overflowY: "auto", border: "1px solid #e5e5e5", borderRadius: "8px" }}>
+                  {guests
+                    .filter(g => normalize(g.name).includes(normalize(qrPickSearch)))
+                    .slice(0, 40)
+                    .map(g => (
+                      <div
+                        key={g.id}
+                        onClick={() => { setQrGuest(g); setQrScannedId(g.id); setQrPickSearch(""); setQrMessage(`Asignar a ${g.name}`); }}
+                        style={{ padding: "0.55rem 0.75rem", fontSize: "0.82rem", cursor: "pointer", borderBottom: "1px solid #f0f0f0", display: "flex", justifyContent: "space-between", gap: "0.5rem", alignItems: "center" }}
+                      >
+                        <span>{g.name}</span>
+                        <span style={{ color: "#bbb", fontSize: "0.7rem", whiteSpace: "nowrap" }}>
+                          {g.mesa ? `Mesa ${g.mesa}` : ""}{g.nroPulsera ? ` · #${g.nroPulsera}` : ""}
+                        </span>
+                      </div>
+                    ))}
+                  {guests.filter(g => normalize(g.name).includes(normalize(qrPickSearch))).length === 0 && (
+                    <div style={{ padding: "0.75rem", fontSize: "0.78rem", color: "#bbb", textAlign: "center" }}>Sin resultados</div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {qrMessage && (
+              <div style={{ padding: "0.5rem 0.85rem", borderRadius: "8px", fontSize: "0.8rem", background: qrStatus === "error" ? "rgba(239,68,68,0.08)" : qrStatus === "done" ? "rgba(34,197,94,0.08)" : "rgba(107,95,248,0.08)", color: qrStatus === "error" ? "#dc2626" : qrStatus === "done" ? "#16a34a" : "#6b5ff8", border: `1px solid ${qrStatus === "error" ? "rgba(239,68,68,0.25)" : qrStatus === "done" ? "rgba(34,197,94,0.25)" : "rgba(107,95,248,0.25)"}` }}>
+                {qrStatus === "scanning" ? "⟳ " : qrStatus === "writing" ? "⟳ " : ""}{qrMessage}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: "0.75rem" }}>
+              <button onClick={closeQrModal} style={{ flex: 1, padding: "0.75rem", borderRadius: "10px", border: "1px solid #e5e5e5", background: "#fff", color: "#111", fontFamily: "inherit", fontSize: "0.88rem", fontWeight: 600, cursor: "pointer" }}>
+                {qrStatus === "done" ? "Cerrar" : "Cancelar"}
+              </button>
+              {(qrStatus === "found" || qrStatus === "writing") && (
+                <button onClick={writeNfcFromQr} disabled={qrStatus === "writing" || !qrGuest} style={{ flex: 1, padding: "0.75rem", borderRadius: "10px", border: "none", background: (qrStatus === "writing" || !qrGuest) ? "#f0f0f0" : "#6b5ff8", color: (qrStatus === "writing" || !qrGuest) ? "#aaa" : "#fff", fontFamily: "inherit", fontSize: "0.88rem", fontWeight: 600, cursor: (qrStatus === "writing" || !qrGuest) ? "not-allowed" : "pointer" }}>
+                  {qrStatus === "writing" ? "Grabando..." : "Grabar pulsera"}
+                </button>
+              )}
+              {qrStatus === "error" && isQrSupported && (
+                <button onClick={startQrScan} style={{ flex: 1, padding: "0.75rem", borderRadius: "10px", border: "none", background: "#6b5ff8", color: "#fff", fontFamily: "inherit", fontSize: "0.88rem", fontWeight: 600, cursor: "pointer" }}>
+                  Reintentar
+                </button>
+              )}
+              {qrStatus === "done" && (
+                <button onClick={startQrScan} style={{ flex: 1, padding: "0.75rem", borderRadius: "10px", border: "1px solid #6b5ff8", background: "#fff", color: "#6b5ff8", fontFamily: "inherit", fontSize: "0.88rem", fontWeight: 600, cursor: "pointer" }}>
+                  Escanear otro
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {showWriteModal && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: "1.5rem" }}>
